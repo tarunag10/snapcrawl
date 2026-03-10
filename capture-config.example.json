@@ -1,0 +1,31 @@
+{
+  "projectName": "Application Website Auto Capture",
+  "baseUrl": "http://localhost:3000/",
+  "outputDir": "output/social",
+  "browser": "chromium",
+  "waitUntil": "load",
+  "crawl": {
+    "enabled": true,
+    "maxPages": 60,
+    "maxDepth": 4,
+    "sameOrigin": true,
+    "includeQuery": false,
+    "waitAfterLoadMs": 250,
+    "excludePatterns": [
+      "/logout",
+      "/signout",
+      "\\.pdf$"
+    ],
+    "initialSteps": [
+      { "type": "fill", "selector": "#email", "value": "demo@example.com" },
+      { "type": "fill", "selector": "#password", "value": "password" },
+      { "type": "click", "selector": "button[type='submit']" },
+      { "type": "wait", "ms": 1200 }
+    ],
+    "viewports": [
+      { "name": "desktop-full", "width": 1440, "height": 1800, "fullPage": true },
+      { "name": "social-1200x627", "width": 1200, "height": 627, "fullPage": false },
+      { "name": "mobile", "width": 430, "height": 932, "fullPage": false }
+    ]
+  }
+}
