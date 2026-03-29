@@ -1,110 +1,68 @@
-# Website Screenshot Capture Kit
+# Universal Playwright Workflow Recorder (MP4)
 
-Capture screenshots for an entire website automatically using Playwright.
+Plug-and-play toolkit to drop into any web app codebase and auto-record an end-to-end workflow video.
 
-## What This Does
+It will:
+- crawl internal pages,
+- run polished visual interactions (hover, smooth scroll, smart click exploration),
+- record the full journey with Playwright,
+- export a final `.mp4` file,
+- write an artifact report of visited pages and interactions.
 
-- Bootstraps any project with screenshot tooling
-- Optionally installs dependencies and Chromium
-- Crawls internal pages from a starting URL
-- Captures each page in multiple viewport sizes
-- Supports one-time login/setup steps before crawling
-- Generates `WORKFLOW.md` with capture details
+## 1) Bootstrap Into Any Project
 
-## Quick Start
-
-From this repository:
+From this toolkit folder, run:
 
 ```bash
-scripts/bootstrap-capture-kit.sh "/absolute/path/to/target-project" --install
+scripts/bootstrap-capture-kit.sh "/absolute/path/to/your-target-project"
 ```
 
-Then in the target project:
+This command auto-installs everything required in the target project:
+- `playwright`
+- `ffmpeg-static`
+- Chromium browser binaries
+- recorder script + config + npm scripts
 
-1. Edit `capture-config.json`:
-- Set `baseUrl` to your app URL
-- Update `crawl.initialSteps` selectors/values if login is required
-2. Run:
+## 2) Edit Config In Target Project
+
+In target project root, edit:
 
 ```bash
-npm run capture:site
+open workflow-recorder.config.json
 ```
 
-Output is written to `output/social/`.
+Minimum fields to check:
+- `baseUrl` (your local app or hosted website URL)
+- `setupSteps` (optional login/setup flow)
 
-## Board/Kiosk Mode (Copy-Paste Only)
+## 3) Run Recording
 
-Run these commands exactly.
-
-### 1) Bootstrap target project
+In target project root:
 
 ```bash
-cd "/Users/tarunagarwal/Documents/1_App Developement - Tarun/set up configuration for screenshots"
-scripts/bootstrap-capture-kit.sh "/absolute/path/to/target-project" --install
+npm run workflow:record
 ```
 
-### 2) Open config in target project
+Output:
+- `output/workflow-recorder/*.mp4`
+- `output/workflow-recorder/artifacts/WORKFLOW_REPORT.md`
+- `output/workflow-recorder/artifacts/crawl.json`
+
+## Headful Recording (Visible Browser)
 
 ```bash
-cd "/absolute/path/to/target-project"
-open capture-config.json
+npm run workflow:record:headful
 ```
 
-Set these fields:
-- `baseUrl` (example: `https://your-app-domain.com/` or `http://localhost:3000/`)
-- `crawl.initialSteps` (only if login is needed)
+## Core Files In This Toolkit
 
-### 3) Run screenshots
-
-```bash
-npm run capture:site
-```
-
-### 4) Find output
-
-```bash
-open output/social
-```
-
-## Core Files
-
-- `scripts/bootstrap-capture-kit.sh`: copies setup into another project
-- `scripts/capture-from-config.js`: main Playwright capture runner
-- `templates/capture-config.template.json`: default auto-crawl template
-- `capture-config.example.json`: fuller example with login and filters
-- `CAPTURE_CONFIG_GUIDE.md`: extended configuration guide
-
-## Config Modes
-
-### 1) Crawl Mode (Default)
-
-Use:
-
-```json
-{
-  "baseUrl": "http://localhost:3000/",
-  "crawl": { "enabled": true }
-}
-```
-
-This mode auto-discovers internal links and captures each page.
-
-### 2) Scenario Mode (Optional)
-
-If you need explicit page actions and fixed screenshot files, provide `scenarios` and leave crawl disabled.
-
-## Typical Commands
-
-```bash
-# install browser binaries (inside target project)
-npm run capture:install
-
-# run capture
-npm run capture:site
-```
+- `scripts/bootstrap-capture-kit.sh`
+- `scripts/record-workflow.js`
+- `templates/workflow-recorder.template.json`
+- `CAPTURE_CONFIG_GUIDE.md`
 
 ## Notes
 
-- Keep `sameOrigin: true` for safe internal crawling.
-- Use `excludePatterns` to skip logout, signout, or asset-like URLs.
-- Increase `maxPages` if your site is large.
+- Default mode is safe and avoids risky actions (delete/logout/payment-like clicks).
+- To be more aggressive, set `workflow.allowRiskyActions` to `true`.
+- Works for local apps (`http://localhost:*`) and hosted websites.

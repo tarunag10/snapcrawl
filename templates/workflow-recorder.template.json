@@ -24,7 +24,10 @@
     "excludePatterns": [
       "/logout",
       "/signout",
-      "/delete"
+      "/sign-out",
+      "/delete",
+      "/remove",
+      "/destroy"
     ]
   },
   "workflow": {

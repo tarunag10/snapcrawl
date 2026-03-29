@@ -1,108 +1,98 @@
-# Capture Config Guide
+# Workflow Recorder Config Guide
 
-Use this setup in any project to auto-capture screenshots across an entire site (or run explicit scenarios), plus a workflow file, by editing only `capture-config.json`.
+This config is designed to be reusable in any project and on any machine.
 
-## One-Command Bootstrap For Other Projects
+Main file in target project:
+- `workflow-recorder.config.json`
 
-From this repository:
+## One-Command Setup For Any Codebase
 
-```bash
-scripts/bootstrap-capture-kit.sh "/absolute/path/to/other-project"
-```
-
-With dependency install included:
+From this toolkit folder:
 
 ```bash
-scripts/bootstrap-capture-kit.sh "/absolute/path/to/other-project" --install
+scripts/bootstrap-capture-kit.sh "/absolute/path/to/target-project"
 ```
 
-## Install Once Per Project
+If you do not want dependency install:
 
 ```bash
-npm init -y
-npm install --save-dev playwright
-npx playwright install chromium
+scripts/bootstrap-capture-kit.sh "/absolute/path/to/target-project" --skip-install
 ```
 
-## Files to Copy to New Projects
-- `scripts/capture-from-config.js`
-- `capture-config.json` (customize per project)
+## Run In Target Project
 
-Optional wrapper:
-- `scripts/capture-social.js`
+```bash
+npm run workflow:record
+```
 
-## Add npm Scripts
+## Config Schema
 
 ```json
 {
-  "scripts": {
-    "capture:social": "node scripts/capture-from-config.js --config capture-config.json",
-    "capture:site": "node scripts/capture-from-config.js --config capture-config.json",
-    "capture:install": "npx playwright install chromium"
-  }
-}
-```
-
-## Minimal Auto-Crawl Config
-
-```json
-{
-  "projectName": "My Website Auto Screenshots",
+  "projectName": "My App Full Workflow",
   "baseUrl": "http://localhost:3000/",
-  "outputDir": "output/social",
+  "outputDir": "output/workflow-recorder",
   "browser": "chromium",
+  "headless": true,
+  "waitUntil": "domcontentloaded",
+  "viewport": { "width": 1512, "height": 982 },
+  "recording": { "width": 1920, "height": 1080, "keepRawVideo": false },
   "crawl": {
     "enabled": true,
-    "maxPages": 40,
+    "maxPages": 35,
     "maxDepth": 4,
     "sameOrigin": true,
     "includeQuery": false,
-    "waitAfterLoadMs": 200,
-    "initialSteps": [
-      { "type": "fill", "selector": "#email", "value": "demo@example.com" },
-      { "type": "fill", "selector": "#password", "value": "password" },
-      { "type": "click", "selector": "button[type='submit']" },
-      { "type": "wait", "ms": 1200 }
-    ],
-    "viewports": [
-      { "name": "desktop-full", "width": 1440, "height": 1800, "fullPage": true },
-      { "name": "social-1200x627", "width": 1200, "height": 627, "fullPage": false }
-    ]
-  }
+    "waitAfterLoadMs": 500,
+    "includePatterns": [],
+    "excludePatterns": ["/logout", "/signout", "/delete"]
+  },
+  "workflow": {
+    "enabled": true,
+    "includeHoverSweep": true,
+    "scrollPerPage": true,
+    "scrollSteps": 4,
+    "perPagePauseMs": 500,
+    "actionPauseMs": 450,
+    "interactionLimitPerPage": 6,
+    "allowRiskyActions": false
+  },
+  "setupSteps": [
+    { "type": "wait", "ms": 400 }
+  ]
 }
 ```
 
-## Crawl Keys
-- `enabled`: when true, crawler mode is used.
-- `maxPages`: hard limit for discovered pages.
-- `maxDepth`: how far link discovery goes from base page.
-- `sameOrigin`: keep capture on same site only.
-- `includeQuery`: include query strings in uniqueness.
-- `includePatterns`: optional regex list to include URLs.
-- `excludePatterns`: optional regex list to skip URLs.
-- `initialSteps`: optional login/setup steps executed once before crawl.
-- `viewports`: one screenshot is captured per page for each viewport.
+## `setupSteps` For Login / Initial State
 
-## Step Types Supported
-- `call`: call a page function on `window` with args.
-- `setById`: set value/checkbox by element id; optional `triggerFn` or `dispatchEvent`.
-- `fill`: type into input via selector.
-- `check`: check or uncheck checkbox via selector.
-- `click`: click element via selector.
-- `scroll`: scroll to x/y.
-- `wait`: wait in milliseconds.
-- `waitForSelector`: wait until selector appears.
-- `evaluate`: run JS expression string.
+Supported step types:
+- `goto`
+- `fill`
+- `click`
+- `press`
+- `check`
+- `wait`
+- `waitForSelector`
+- `evaluate`
 
-## Scenario Mode (Optional)
-If you need exact scripted screenshots instead of auto-discovery, omit `crawl.enabled` and provide `scenarios` as before.
+Example login snippet:
 
-## Run
-
-```bash
-npm run capture:site
+```json
+"setupSteps": [
+  { "type": "fill", "selector": "#email", "value": "demo@example.com" },
+  { "type": "fill", "selector": "#password", "value": "password" },
+  { "type": "click", "selector": "button[type='submit']" },
+  { "type": "wait", "ms": 1200 }
+]
 ```
 
-Output:
-- PNG files in `output/social/`
-- Auto-generated `output/social/WORKFLOW.md`
+## Safety vs Coverage
+
+- `allowRiskyActions: false` (default) avoids destructive or payment-like clicks.
+- Set `allowRiskyActions: true` only when you explicitly want deep workflow traversal.
+
+## Output Files
+
+- Final video: `output/workflow-recorder/*.mp4`
+- Markdown run report: `output/workflow-recorder/artifacts/WORKFLOW_REPORT.md`
+- Crawl + interaction JSON: `output/workflow-recorder/artifacts/crawl.json`
