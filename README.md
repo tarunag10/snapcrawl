@@ -64,6 +64,16 @@ node scripts/record-workflow.js --help
 node scripts/capture-from-config.js --help
 ```
 
+### Initialize Configs (Interactive)
+
+```bash
+npx snapcrawl-init          # standalone command
+npx snapcrawl init           # subcommand
+node dist/create-snapcrawl.js  # direct
+```
+
+Answers 5 questions and generates `capture-config.json` (and optionally `workflow-recorder.config.json`) with sensible defaults.
+
 ## Core Files
 
 ```
@@ -113,7 +123,7 @@ Both scripts support these step types in `setupSteps` / `scenarios[].steps`:
 |---------|--------|-------------|
 | System Chrome fallback | **Done** | Use `channel: 'chrome'` to skip Chromium download — uses already-installed Chrome/Edge |
 | Single-file bundle | **Done** | Bundled with `esbuild` — each CLI entry point is a single self-contained JS file in `dist/` |
-| `npm create snapcrawl` | Planned | Interactive scaffolder (like `create-react-app`) to set up configs in any project |
+| `snapcrawl init` scaffolder | **Done** | Interactive scaffolder (`npx snapcrawl-init`) to set up configs in any project |
 | GitHub Action | Planned | `uses: snapcrawl/action@v1` for CI screenshot capture on every PR |
 | Docker image | Planned | `docker run snapcrawl` with Playwright + Chrome pre-installed |
 | Homebrew tap | Planned | `brew install snapcrawl` for macOS users |

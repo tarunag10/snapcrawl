@@ -1,5 +1,12 @@
 #!/usr/bin/env node
 
+/* Route `snapcrawl init` to the interactive scaffolder */
+if (process.argv.includes('init')) {
+  require('./create-snapcrawl')().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });
+  /* prevent the rest of the script from executing */
+  return;
+}
+
 const fs = require('fs');
 const path = require('path');
 

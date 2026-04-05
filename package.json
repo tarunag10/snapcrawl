@@ -5,7 +5,8 @@
   "main": "dist/capture-from-config.js",
   "bin": {
     "snapcrawl": "dist/capture-from-config.js",
-    "snapcrawl-record": "dist/record-workflow.js"
+    "snapcrawl-record": "dist/record-workflow.js",
+    "snapcrawl-init": "dist/create-snapcrawl.js"
   },
   "files": [
     "dist/",
