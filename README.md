@@ -113,6 +113,42 @@ Both scripts support these step types in `setupSteps` / `scenarios[].steps`:
 
 ---
 
+## MCP Server (AI Tool Integration)
+
+Snapcrawl includes an MCP (Model Context Protocol) server so AI tools like Claude Code and Cursor can trigger captures directly.
+
+### Setup with Claude Code
+
+```bash
+claude mcp add snapcrawl node dist/mcp-server.js
+```
+
+### Setup with Claude Desktop
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "snapcrawl": {
+      "command": "npx",
+      "args": ["snapcrawl-mcp"]
+    }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `snapcrawl_init` | Generate config files programmatically (baseUrl, viewports, video) |
+| `snapcrawl_capture` | Run screenshot capture using a config file |
+| `snapcrawl_record` | Run video workflow recording using a config file |
+| `snapcrawl_status` | Check which configs exist and summarize their settings |
+
+---
+
 ## Roadmap: Planned Features
 
 ### Zero-Install Distribution
