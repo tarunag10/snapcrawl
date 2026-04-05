@@ -1,250 +1,77 @@
-const fs = require("fs");
-const path = require("path");
-const { chromium, firefox, webkit } = require("playwright");
+#!/usr/bin/env node
+
+const fs = require('fs');
+const path = require('path');
+
+const {
+  browserFromName,
+  ensureDir,
+  resolveUrl,
+  sanitizeSegment,
+  compilePatterns,
+  normalizeHref,
+  runStep,
+  collectPageLinks,
+  buildPageSlug,
+  pad,
+} = require('../lib/shared');
+
+/* ------------------------------------------------------------------ */
+/*  CLI                                                                */
+/* ------------------------------------------------------------------ */
+
+function printHelp() {
+  console.log(`
+Usage: node capture-from-config.js [options]
+
+Crawl a website (or run manual scenarios) and capture multi-viewport
+screenshots (desktop, mobile, tablet).
+
+Options:
+  --config <path>   Config file path (default: capture-config.json)
+  --no-workflow     Skip generating the WORKFLOW.md report
+  --help, -h        Show this help message
+  `.trim());
+}
 
 function parseArgs(argv) {
-  const args = { config: "capture-config.json", workflow: true };
+  const args = { config: 'capture-config.json', workflow: true };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === "--config" && argv[i + 1]) {
+    if (arg === '--help' || arg === '-h') {
+      printHelp();
+      process.exit(0);
+    } else if (arg === '--config' && argv[i + 1]) {
       args.config = argv[i + 1];
       i += 1;
-    } else if (arg === "--no-workflow") {
+    } else if (arg === '--no-workflow') {
       args.workflow = false;
     }
   }
   return args;
 }
 
-function ensureDir(dirPath) {
-  fs.mkdirSync(dirPath, { recursive: true });
-}
-
-function resolveUrl(inputUrl, cwd) {
-  const expanded = inputUrl.replace(/\$\{cwd\}/g, cwd);
-  if (expanded.startsWith("http://") || expanded.startsWith("https://") || expanded.startsWith("file://")) {
-    return expanded;
-  }
-  return `file://${path.resolve(cwd, expanded).replace(/ /g, "%20")}`;
-}
-
-function getBrowser(name) {
-  if (name === "firefox") return firefox;
-  if (name === "webkit") return webkit;
-  return chromium;
-}
-
-function compilePatterns(patterns) {
-  if (!Array.isArray(patterns)) return [];
-  return patterns
-    .filter(Boolean)
-    .map((p) => {
-      try {
-        return new RegExp(p);
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
-}
-
-function passesPatterns(text, includePatterns, excludePatterns) {
-  if (includePatterns.length > 0 && !includePatterns.some((r) => r.test(text))) {
-    return false;
-  }
-  if (excludePatterns.some((r) => r.test(text))) {
-    return false;
-  }
-  return true;
-}
-
-function extension(pathname) {
-  const match = pathname.toLowerCase().match(/\.([a-z0-9]+)$/);
-  return match ? match[1] : "";
-}
-
-function isLikelyHtml(urlObj) {
-  const nonHtml = new Set([
-    "png",
-    "jpg",
-    "jpeg",
-    "gif",
-    "webp",
-    "svg",
-    "ico",
-    "pdf",
-    "zip",
-    "css",
-    "js",
-    "mjs",
-    "json",
-    "xml",
-    "txt",
-    "woff",
-    "woff2",
-    "ttf",
-    "eot",
-    "mp4",
-    "webm",
-    "mp3",
-    "wav",
-  ]);
-  const ext = extension(urlObj.pathname);
-  return !ext || !nonHtml.has(ext);
-}
-
-function normalizeForQueue(rawHref, currentUrl, rootUrl, options) {
-  if (!rawHref) return null;
-  const href = rawHref.trim();
-  if (!href || href.startsWith("#")) return null;
-  if (href.startsWith("javascript:") || href.startsWith("mailto:") || href.startsWith("tel:")) return null;
-
-  let candidate;
-  try {
-    candidate = new URL(href, currentUrl);
-  } catch {
-    return null;
-  }
-
-  if (!["http:", "https:", "file:"].includes(candidate.protocol)) return null;
-
-  if (options.sameOrigin) {
-    if (candidate.protocol === "file:" && rootUrl.protocol === "file:") {
-      const rootDir = path.dirname(decodeURIComponent(rootUrl.pathname));
-      const candPath = decodeURIComponent(candidate.pathname);
-      if (!candPath.startsWith(rootDir)) return null;
-    } else if (candidate.origin !== rootUrl.origin) {
-      return null;
-    }
-  }
-
-  if (!options.includeQuery) {
-    candidate.search = "";
-  }
-  candidate.hash = "";
-
-  if (!isLikelyHtml(candidate)) return null;
-
-  const hrefToCheck = candidate.href;
-  if (!passesPatterns(hrefToCheck, options.includePatterns, options.excludePatterns)) {
-    return null;
-  }
-
-  return hrefToCheck;
-}
-
-function safeSegment(text) {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-}
-
-function buildPageSlug(urlObj) {
-  const segments = urlObj.pathname
-    .split("/")
-    .map((s) => safeSegment(s))
-    .filter(Boolean);
-  const base = segments.length > 0 ? segments.join("-") : "home";
-  if (!urlObj.search) return base;
-  const querySlug = safeSegment(urlObj.search.replace(/^\?/, ""));
-  return querySlug ? `${base}-${querySlug}` : base;
-}
-
-function pad(n, width) {
-  return String(n).padStart(width, "0");
-}
+/* ------------------------------------------------------------------ */
+/*  Defaults                                                           */
+/* ------------------------------------------------------------------ */
 
 function defaultViewportSet() {
   return [
-    { name: "desktop-full", width: 1440, height: 1800, fullPage: true },
-    { name: "social-1200x627", width: 1200, height: 627, fullPage: false },
-    { name: "mobile", width: 430, height: 932, fullPage: false },
+    { name: 'desktop-full', width: 1440, height: 1800, fullPage: true },
+    { name: 'social-1200x627', width: 1200, height: 627, fullPage: false },
+    { name: 'mobile', width: 430, height: 932, fullPage: false },
   ];
 }
 
-async function runStep(page, step) {
-  if (step.type === "call") {
-    await page.evaluate(({ fn, args }) => {
-      if (typeof window[fn] !== "function") throw new Error(`Function not found: ${fn}`);
-      window[fn](...(args || []));
-    }, step);
-    return;
-  }
-
-  if (step.type === "setById") {
-    await page.evaluate((s) => {
-      const el = document.getElementById(s.id);
-      if (!el) throw new Error(`Element not found by id: ${s.id}`);
-      if (el.type === "checkbox") {
-        el.checked = Boolean(s.value);
-      } else {
-        el.value = String(s.value);
-      }
-      if (s.triggerFn) {
-        if (typeof window[s.triggerFn] !== "function") throw new Error(`Trigger function not found: ${s.triggerFn}`);
-        window[s.triggerFn](el);
-      } else if (s.dispatchEvent) {
-        el.dispatchEvent(new Event(s.dispatchEvent, { bubbles: true }));
-      }
-    }, step);
-    return;
-  }
-
-  if (step.type === "fill") {
-    await page.fill(step.selector, String(step.value ?? ""));
-    return;
-  }
-
-  if (step.type === "check") {
-    if (step.value === false) {
-      await page.uncheck(step.selector);
-    } else {
-      await page.check(step.selector);
-    }
-    return;
-  }
-
-  if (step.type === "click") {
-    await page.click(step.selector);
-    return;
-  }
-
-  if (step.type === "scroll") {
-    const x = Number(step.x || 0);
-    const y = Number(step.y || 0);
-    await page.evaluate(({ sx, sy }) => window.scrollTo(sx, sy), { sx: x, sy: y });
-    return;
-  }
-
-  if (step.type === "evaluate") {
-    await page.evaluate(step.script);
-    return;
-  }
-
-  if (step.type === "wait") {
-    await page.waitForTimeout(Number(step.ms || 200));
-    return;
-  }
-
-  if (step.type === "waitForSelector") {
-    await page.waitForSelector(step.selector, { timeout: Number(step.timeoutMs || 10000) });
-    return;
-  }
-
-  throw new Error(`Unsupported step type: ${step.type}`);
-}
-
-async function collectLinks(page) {
-  return page.$$eval("a[href]", (anchors) => anchors.map((a) => a.getAttribute("href")).filter(Boolean));
-}
+/* ------------------------------------------------------------------ */
+/*  Scenario mode                                                      */
+/* ------------------------------------------------------------------ */
 
 async function captureScenarioMode(page, config, outputDir, cwd) {
   const captures = [];
 
   for (const scenario of config.scenarios) {
-    if (!scenario.file) throw new Error("Each scenario requires a file");
+    if (!scenario.file) throw new Error('Each scenario requires a file');
     if (!scenario.viewport || !scenario.viewport.width || !scenario.viewport.height) {
       throw new Error(`Scenario ${scenario.file} is missing viewport width/height`);
     }
@@ -266,20 +93,24 @@ async function captureScenarioMode(page, config, outputDir, cwd) {
     });
 
     captures.push({
-      mode: "scenario",
+      mode: 'scenario',
       name: scenario.name || scenario.file,
       file: scenario.file,
       size: `${scenario.viewport.width}x${scenario.viewport.height}`,
     });
-    console.log(path.relative(cwd, outPath));
+    console.log(`  ${path.relative(cwd, outPath)}`);
   }
 
   return captures;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Crawl mode                                                         */
+/* ------------------------------------------------------------------ */
+
 async function captureCrawlMode(page, config, outputDir, cwd) {
   const crawl = config.crawl || {};
-  const waitUntil = config.waitUntil || "load";
+  const waitUntil = config.waitUntil || 'load';
   const waitAfterLoadMs = Number(crawl.waitAfterLoadMs || 200);
   const maxPages = Number(crawl.maxPages || 40);
   const maxDepth = Number(crawl.maxDepth || 4);
@@ -287,7 +118,10 @@ async function captureCrawlMode(page, config, outputDir, cwd) {
   const sameOrigin = crawl.sameOrigin !== false;
   const includePatterns = compilePatterns(crawl.includePatterns);
   const excludePatterns = compilePatterns(crawl.excludePatterns);
-  const rawViewports = Array.isArray(crawl.viewports) && crawl.viewports.length > 0 ? crawl.viewports : defaultViewportSet();
+  const rawViewports =
+    Array.isArray(crawl.viewports) && crawl.viewports.length > 0
+      ? crawl.viewports
+      : defaultViewportSet();
   const viewports = rawViewports.map((v, index) => ({
     name: v.name || `view-${index + 1}`,
     width: Number(v.width || 1440),
@@ -326,7 +160,7 @@ async function captureCrawlMode(page, config, outputDir, cwd) {
         await page.waitForTimeout(waitAfterLoadMs);
       }
     } catch (error) {
-      console.warn(`Skipping (navigation failed): ${current.href} :: ${error.message}`);
+      console.warn(`  Skipping (navigation failed): ${current.href} :: ${error.message}`);
       continue;
     }
 
@@ -336,28 +170,28 @@ async function captureCrawlMode(page, config, outputDir, cwd) {
     for (const vp of viewports) {
       await page.setViewportSize({ width: vp.width, height: vp.height });
 
-      const file = `${pad(fileCounter, 3)}-${pageSlug}-${safeSegment(vp.name) || "view"}.png`;
+      const file = `${pad(fileCounter, 3)}-${pageSlug}-${sanitizeSegment(vp.name) || 'view'}.png`;
       const outPath = path.join(outputDir, file);
       await page.screenshot({ path: outPath, fullPage: vp.fullPage });
 
       captures.push({
-        mode: "crawl",
+        mode: 'crawl',
         name: `${current.href} [${vp.name}]`,
         file,
         size: `${vp.width}x${vp.height}`,
         url: current.href,
       });
       fileCounter += 1;
-      console.log(path.relative(cwd, outPath));
+      console.log(`  ${path.relative(cwd, outPath)}`);
     }
 
     if (current.depth >= maxDepth) {
       continue;
     }
 
-    const hrefs = await collectLinks(page);
+    const hrefs = await collectPageLinks(page);
     for (const rawHref of hrefs) {
-      const normalized = normalizeForQueue(rawHref, current.href, rootUrl, {
+      const normalized = normalizeHref(rawHref, current.href, rootUrl, {
         sameOrigin,
         includeQuery,
         includePatterns,
@@ -375,74 +209,87 @@ async function captureCrawlMode(page, config, outputDir, cwd) {
   return captures;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Report                                                             */
+/* ------------------------------------------------------------------ */
+
 function workflowContent(config, captures, mode) {
   const lines = [];
-  lines.push(`# ${config.projectName || "Capture"} Workflow`);
-  lines.push("");
+  lines.push(`# ${config.projectName || 'Capture'} Workflow`);
+  lines.push('');
   lines.push(`Mode: ${mode}`);
-  lines.push("");
-  lines.push("## Files Generated");
+  lines.push('');
+  lines.push('## Files Generated');
   for (const c of captures) {
     lines.push(`- \`${c.file}\` (${c.size})`);
   }
-  lines.push("");
-  lines.push("## Capture Sequence");
+  lines.push('');
+  lines.push('## Capture Sequence');
   captures.forEach((c, i) => {
-    if (c.url) {
-      lines.push(`${i + 1}. ${c.name}`);
-    } else {
-      lines.push(`${i + 1}. ${c.name}`);
-    }
+    const extra = c.url ? ` — ${c.url}` : '';
+    lines.push(`${i + 1}. ${c.name}${extra}`);
   });
-  lines.push("");
-  lines.push("## Recreate");
-  lines.push("Run from project root:");
-  lines.push("");
-  lines.push("```bash");
+  lines.push('');
+  lines.push('## Recreate');
+  lines.push('Run from project root:');
+  lines.push('');
+  lines.push('```bash');
   lines.push(`node scripts/capture-from-config.js --config ${config._configFile}`);
-  lines.push("```");
-  lines.push("");
-  lines.push("## Notes");
-  lines.push("- Update only `capture-config.json` to reuse in other projects.");
-  lines.push("- Crawl mode auto-discovers internal links from `baseUrl`.");
-  lines.push("- Scenario mode runs your explicit sequence for each screenshot.");
-  return `${lines.join("\n")}\n`;
+  lines.push('```');
+  lines.push('');
+  lines.push('## Notes');
+  lines.push('- Update only `capture-config.json` to reuse in other projects.');
+  lines.push('- Crawl mode auto-discovers internal links from `baseUrl`.');
+  lines.push('- Scenario mode runs your explicit sequence for each screenshot.');
+  return `${lines.join('\n')}\n`;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Validation                                                         */
+/* ------------------------------------------------------------------ */
+
 function requireFields(config) {
-  if (!config.baseUrl) throw new Error("Config missing required field: baseUrl");
+  if (!config.baseUrl) throw new Error('Config missing required field: baseUrl');
 
   const crawlEnabled = Boolean(config.crawl && config.crawl.enabled);
   const scenariosOk = Array.isArray(config.scenarios) && config.scenarios.length > 0;
 
   if (!crawlEnabled && !scenariosOk) {
-    throw new Error("Config requires at least one scenario, or set crawl.enabled=true");
+    throw new Error('Config requires at least one scenario, or set crawl.enabled=true');
   }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Main                                                               */
+/* ------------------------------------------------------------------ */
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const cwd = process.cwd();
   const configPath = path.resolve(cwd, args.config);
-  const raw = fs.readFileSync(configPath, "utf8");
+  const raw = fs.readFileSync(configPath, 'utf8');
   const config = JSON.parse(raw);
   config._configFile = path.relative(cwd, configPath);
 
   requireFields(config);
 
-  const browserType = getBrowser(config.browser || "chromium");
+  const browserType = browserFromName(config.browser || 'chromium');
   const browser = await browserType.launch({ headless: config.headless !== false });
   const page = await browser.newPage();
 
-  const outputDir = path.resolve(cwd, config.outputDir || "output/social");
+  const outputDir = path.resolve(cwd, config.outputDir || 'output/social');
   ensureDir(outputDir);
 
   const crawlEnabled = Boolean(config.crawl && config.crawl.enabled);
-  const mode = crawlEnabled ? "crawl" : "scenarios";
+  const mode = crawlEnabled ? 'crawl' : 'scenarios';
+
+  console.log(`\nCapturing: ${config.projectName || 'screenshots'}`);
+  console.log(`  Mode: ${mode}`);
+  console.log('');
 
   if (!crawlEnabled) {
     const url = resolveUrl(config.baseUrl, cwd);
-    await page.goto(url, { waitUntil: config.waitUntil || "load" });
+    await page.goto(url, { waitUntil: config.waitUntil || 'load' });
   }
 
   const captures = crawlEnabled
@@ -450,15 +297,17 @@ async function main() {
     : await captureScenarioMode(page, config, outputDir, cwd);
 
   if (args.workflow) {
-    const workflowPath = path.join(outputDir, "WORKFLOW.md");
-    fs.writeFileSync(workflowPath, workflowContent(config, captures, mode), "utf8");
-    console.log(path.relative(cwd, workflowPath));
+    const workflowPath = path.join(outputDir, 'WORKFLOW.md');
+    fs.writeFileSync(workflowPath, workflowContent(config, captures, mode), 'utf8');
+    console.log(`  ${path.relative(cwd, workflowPath)}`);
   }
 
   await browser.close();
+
+  console.log(`\nDone! ${captures.length} screenshot(s) captured.`);
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error(err.message || err);
   process.exit(1);
 });

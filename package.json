@@ -1,0 +1,26 @@
+{
+  "name": "snapcrawl",
+  "version": "0.1.0",
+  "description": "Plug-and-play toolkit to auto-record MP4 demo videos and multi-viewport screenshots of any website",
+  "main": "scripts/record-workflow.js",
+  "scripts": {
+    "workflow:record": "node scripts/record-workflow.js --config workflow-recorder.config.json",
+    "workflow:record:headful": "node scripts/record-workflow.js --config workflow-recorder.config.json --headful",
+    "capture:screenshots": "node scripts/capture-from-config.js --config capture-config.json",
+    "workflow:install": "npx playwright install chromium"
+  },
+  "keywords": [
+    "screenshot",
+    "video",
+    "recorder",
+    "playwright",
+    "crawl",
+    "demo",
+    "mp4"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "playwright": "^1.53.0",
+    "ffmpeg-static": "^5.2.0"
+  }
+}

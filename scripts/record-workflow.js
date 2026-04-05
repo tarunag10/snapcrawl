@@ -4,13 +4,27 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawnSync } = require('child_process');
+
 let ffmpegStaticPath = null;
 try {
   ffmpegStaticPath = require('ffmpeg-static');
 } catch {
   ffmpegStaticPath = null;
 }
-const { chromium, firefox, webkit } = require('playwright');
+
+const {
+  browserFromName,
+  ensureDir,
+  resolveUrl,
+  sanitizeSegment,
+  slugForUrl,
+  compilePatterns,
+  normalizeHref,
+  sleep,
+  runStep,
+  collectPageLinks,
+  deepMerge,
+} = require('../lib/shared');
 
 const DEFAULT_CONFIG = {
   projectName: 'Universal Workflow Recorder',
@@ -76,6 +90,28 @@ const RISKY_WORDS = [
   'erase',
 ];
 
+/* ------------------------------------------------------------------ */
+/*  CLI                                                                */
+/* ------------------------------------------------------------------ */
+
+function printHelp() {
+  console.log(`
+Usage: node record-workflow.js [options]
+
+Record a polished MP4 demo video by crawling a website, performing smart
+interactions (hover, scroll, click exploration), and capturing everything
+via Playwright's video recording.
+
+Options:
+  --config <path>      Config file path (default: workflow-recorder.config.json)
+  --output <dir>       Override outputDir from config
+  --base-url <url>     Override baseUrl from config
+  --headful            Show the browser window during recording
+  --keep-raw-video     Keep the raw .webm file alongside the .mp4
+  --help, -h           Show this help message
+  `.trim());
+}
+
 function parseArgs(argv) {
   const args = {
     config: 'workflow-recorder.config.json',
@@ -87,6 +123,11 @@ function parseArgs(argv) {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+
+    if (arg === '--help' || arg === '-h') {
+      printHelp();
+      process.exit(0);
+    }
 
     if (arg === '--config' && argv[i + 1]) {
       args.config = argv[i + 1];
@@ -120,249 +161,18 @@ function parseArgs(argv) {
   return args;
 }
 
-function deepMerge(base, patch) {
-  if (Array.isArray(base) || Array.isArray(patch)) {
-    return patch !== undefined ? patch : base;
-  }
-
-  if (typeof base !== 'object' || base === null) {
-    return patch !== undefined ? patch : base;
-  }
-
-  const out = { ...base };
-  const keys = new Set([...Object.keys(base), ...Object.keys(patch || {})]);
-
-  for (const key of keys) {
-    const baseValue = base[key];
-    const patchValue = patch ? patch[key] : undefined;
-
-    if (patchValue === undefined) {
-      out[key] = baseValue;
-      continue;
-    }
-
-    if (
-      typeof baseValue === 'object' &&
-      baseValue !== null &&
-      !Array.isArray(baseValue) &&
-      typeof patchValue === 'object' &&
-      patchValue !== null &&
-      !Array.isArray(patchValue)
-    ) {
-      out[key] = deepMerge(baseValue, patchValue);
-    } else {
-      out[key] = patchValue;
-    }
-  }
-
-  return out;
-}
-
-function ensureDir(dirPath) {
-  fs.mkdirSync(dirPath, { recursive: true });
-}
-
-function sanitizeSegment(text) {
-  return String(text || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80);
-}
-
-function slugForUrl(inputUrl) {
-  try {
-    const url = new URL(inputUrl);
-    const joined = [url.pathname, url.search].filter(Boolean).join('-');
-    return sanitizeSegment(joined) || 'home';
-  } catch {
-    return sanitizeSegment(inputUrl) || 'home';
-  }
-}
-
-function resolveUrl(baseUrl, cwd) {
-  if (!baseUrl) return '';
-  const expanded = String(baseUrl).replace(/\$\{cwd\}/g, cwd);
-
-  if (expanded.startsWith('http://') || expanded.startsWith('https://') || expanded.startsWith('file://')) {
-    return expanded;
-  }
-
-  return `file://${path.resolve(cwd, expanded).replace(/ /g, '%20')}`;
-}
-
-function browserFromName(name) {
-  if (name === 'firefox') return firefox;
-  if (name === 'webkit') return webkit;
-  return chromium;
-}
-
-function compilePatterns(patterns) {
-  if (!Array.isArray(patterns)) return [];
-
-  return patterns
-    .filter(Boolean)
-    .map((item) => {
-      try {
-        return new RegExp(item);
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
-}
-
-function matchesFilters(urlValue, includePatterns, excludePatterns) {
-  if (includePatterns.length > 0 && !includePatterns.some((rx) => rx.test(urlValue))) {
-    return false;
-  }
-
-  if (excludePatterns.some((rx) => rx.test(urlValue))) {
-    return false;
-  }
-
-  return true;
-}
-
-function isLikelyDocument(urlObject) {
-  const nonDocExtensions = new Set([
-    'png',
-    'jpg',
-    'jpeg',
-    'gif',
-    'svg',
-    'webp',
-    'pdf',
-    'zip',
-    'css',
-    'js',
-    'mjs',
-    'json',
-    'xml',
-    'txt',
-    'woff',
-    'woff2',
-    'ttf',
-    'eot',
-    'mp4',
-    'webm',
-    'mp3',
-    'wav',
-  ]);
-
-  const ext = path.extname(urlObject.pathname || '').replace(/^\./, '').toLowerCase();
-  return !ext || !nonDocExtensions.has(ext);
-}
-
-function normalizeHref(rawHref, currentUrl, rootUrl, options) {
-  if (!rawHref || typeof rawHref !== 'string') return null;
-
-  const href = rawHref.trim();
-  if (!href || href.startsWith('#')) return null;
-  if (href.startsWith('javascript:') || href.startsWith('mailto:') || href.startsWith('tel:')) return null;
-
-  let candidate;
-
-  try {
-    candidate = new URL(href, currentUrl);
-  } catch {
-    return null;
-  }
-
-  if (!['http:', 'https:', 'file:'].includes(candidate.protocol)) {
-    return null;
-  }
-
-  if (options.sameOrigin) {
-    if (candidate.protocol === 'file:' && rootUrl.protocol === 'file:') {
-      const rootDir = path.dirname(decodeURIComponent(rootUrl.pathname));
-      const candidatePath = decodeURIComponent(candidate.pathname);
-      if (!candidatePath.startsWith(rootDir)) return null;
-    } else if (candidate.origin !== rootUrl.origin) {
-      return null;
-    }
-  }
-
-  if (!options.includeQuery) {
-    candidate.search = '';
-  }
-
-  candidate.hash = '';
-
-  if (!isLikelyDocument(candidate)) {
-    return null;
-  }
-
-  if (!matchesFilters(candidate.href, options.includePatterns, options.excludePatterns)) {
-    return null;
-  }
-
-  return candidate.href;
-}
-
-async function sleep(ms) {
-  if (!ms || ms <= 0) return;
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function runStep(page, step) {
-  if (!step || typeof step !== 'object') return;
-
-  if (step.type === 'goto' && step.url) {
-    await page.goto(step.url, { waitUntil: step.waitUntil || 'domcontentloaded' });
-    return;
-  }
-
-  if (step.type === 'fill') {
-    await page.fill(step.selector, String(step.value ?? ''));
-    return;
-  }
-
-  if (step.type === 'click') {
-    await page.click(step.selector);
-    return;
-  }
-
-  if (step.type === 'press') {
-    await page.press(step.selector, step.key || 'Enter');
-    return;
-  }
-
-  if (step.type === 'check') {
-    if (step.value === false) {
-      await page.uncheck(step.selector);
-    } else {
-      await page.check(step.selector);
-    }
-    return;
-  }
-
-  if (step.type === 'wait') {
-    await page.waitForTimeout(Number(step.ms || 300));
-    return;
-  }
-
-  if (step.type === 'waitForSelector') {
-    await page.waitForSelector(step.selector, { timeout: Number(step.timeoutMs || 15000) });
-    return;
-  }
-
-  if (step.type === 'evaluate') {
-    await page.evaluate(step.script);
-    return;
-  }
-
-  throw new Error(`Unsupported setup step type: ${step.type}`);
-}
-
-async function collectPageLinks(page) {
-  return page.$$eval('a[href]', (anchors) => anchors.map((a) => a.getAttribute('href')).filter(Boolean));
-}
+/* ------------------------------------------------------------------ */
+/*  Risky-action filter                                                */
+/* ------------------------------------------------------------------ */
 
 function looksRisky(label) {
   const normalized = String(label || '').toLowerCase();
   return RISKY_WORDS.some((word) => normalized.includes(word));
 }
+
+/* ------------------------------------------------------------------ */
+/*  Workflow interactions                                               */
+/* ------------------------------------------------------------------ */
 
 async function scrollShowcase(page, config) {
   if (!config.workflow.scrollPerPage) return;
@@ -370,13 +180,18 @@ async function scrollShowcase(page, config) {
   const steps = Math.max(1, Number(config.workflow.scrollSteps || 4));
   const pause = Number(config.workflow.actionPauseMs || 400);
 
-  const totalHeight = await page.evaluate(() => Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
+  const totalHeight = await page.evaluate(() =>
+    Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)
+  );
   const viewportHeight = page.viewportSize() ? page.viewportSize().height : 900;
   const maxY = Math.max(0, totalHeight - viewportHeight);
 
   for (let i = 1; i <= steps; i += 1) {
     const y = Math.round((i / steps) * maxY);
-    await page.evaluate((value) => window.scrollTo({ top: value, left: 0, behavior: 'smooth' }), y);
+    await page.evaluate(
+      (value) => window.scrollTo({ top: value, left: 0, behavior: 'smooth' }),
+      y
+    );
     await sleep(pause);
   }
 
@@ -388,7 +203,9 @@ async function hoverSweep(page, config) {
   if (!config.workflow.includeHoverSweep) return;
 
   const points = await page.evaluate(() => {
-    const nodes = Array.from(document.querySelectorAll('a, button, [role="button"], input, textarea, [role="tab"]'));
+    const nodes = Array.from(
+      document.querySelectorAll('a, button, [role="button"], input, textarea, [role="tab"]')
+    );
 
     return nodes
       .slice(0, 18)
@@ -398,7 +215,11 @@ async function hoverSweep(page, config) {
         return {
           x: Math.round(r.left + r.width / 2),
           y: Math.round(r.top + r.height / 2),
-          inView: r.bottom > 0 && r.right > 0 && r.left < window.innerWidth && r.top < window.innerHeight,
+          inView:
+            r.bottom > 0 &&
+            r.right > 0 &&
+            r.left < window.innerWidth &&
+            r.top < window.innerHeight,
         };
       })
       .filter(Boolean)
@@ -413,7 +234,8 @@ async function hoverSweep(page, config) {
 
 async function candidateInteractions(page) {
   return page.evaluate(() => {
-    const selectors = 'button, [role="button"], [role="tab"], [aria-expanded], details summary, [data-testid], [data-test]';
+    const selectors =
+      'button, [role="button"], [role="tab"], [aria-expanded], details summary, [data-testid], [data-test]';
     const nodes = Array.from(document.querySelectorAll(selectors));
 
     const values = [];
@@ -425,7 +247,12 @@ async function candidateInteractions(page) {
       if (rect.bottom <= 0 || rect.right <= 0) continue;
       if (rect.left >= window.innerWidth || rect.top >= window.innerHeight) continue;
 
-      const text = (node.innerText || node.getAttribute('aria-label') || node.getAttribute('title') || '').trim();
+      const text = (
+        node.innerText ||
+        node.getAttribute('aria-label') ||
+        node.getAttribute('title') ||
+        ''
+      ).trim();
 
       values.push({
         index: idx,
@@ -500,6 +327,10 @@ async function exploreInteractionsOnPage(page, config, pageUrl) {
   return visitedActions;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Crawler                                                            */
+/* ------------------------------------------------------------------ */
+
 async function crawlSite(page, config, rootHref) {
   const crawl = config.crawl || {};
   const maxPages = Math.max(1, Number(crawl.maxPages || 30));
@@ -536,7 +367,7 @@ async function crawlSite(page, config, rootHref) {
 
     visitedSet.add(current.href);
     visited.push({ url: current.href, depth: current.depth });
-    console.log(`[visit] ${current.href}`);
+    console.log(`  [visit] ${current.href}`);
 
     await hoverSweep(page, config);
     await scrollShowcase(page, config);
@@ -576,6 +407,10 @@ async function crawlSite(page, config, rootHref) {
   return { visited, actionLog };
 }
 
+/* ------------------------------------------------------------------ */
+/*  FFmpeg conversion                                                  */
+/* ------------------------------------------------------------------ */
+
 function resolveFfmpegBinary() {
   if (process.env.FFMPEG_BIN) {
     return process.env.FFMPEG_BIN;
@@ -600,26 +435,16 @@ function convertWebmToMp4(sourceWebmPath, targetMp4Path) {
     ffmpegBinary,
     [
       '-y',
-      '-i',
-      sourceWebmPath,
-      '-map',
-      '0:v:0',
-      '-map',
-      '0:a?',
-      '-c:v',
-      'libx264',
-      '-preset',
-      'medium',
-      '-crf',
-      '22',
-      '-pix_fmt',
-      'yuv420p',
-      '-movflags',
-      '+faststart',
-      '-c:a',
-      'aac',
-      '-b:a',
-      '160k',
+      '-i', sourceWebmPath,
+      '-map', '0:v:0',
+      '-map', '0:a?',
+      '-c:v', 'libx264',
+      '-preset', 'medium',
+      '-crf', '22',
+      '-pix_fmt', 'yuv420p',
+      '-movflags', '+faststart',
+      '-c:a', 'aac',
+      '-b:a', '160k',
       targetMp4Path,
     ],
     { encoding: 'utf8' }
@@ -629,6 +454,10 @@ function convertWebmToMp4(sourceWebmPath, targetMp4Path) {
     throw new Error(`FFmpeg conversion failed: ${result.stderr || result.stdout || 'unknown error'}`);
   }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Report                                                             */
+/* ------------------------------------------------------------------ */
 
 function reportMarkdown(config, crawlResult, outputMp4Path, startedAt, endedAt, rootHref) {
   const lines = [];
@@ -661,12 +490,16 @@ function reportMarkdown(config, crawlResult, outputMp4Path, startedAt, endedAt, 
   lines.push('');
   lines.push('## Re-run');
   lines.push('```bash');
-  lines.push(`npm run workflow:record`);
+  lines.push('npm run workflow:record');
   lines.push('```');
   lines.push('');
 
   return `${lines.join('\n')}\n`;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Main                                                               */
+/* ------------------------------------------------------------------ */
 
 async function main() {
   const startedAt = new Date();
@@ -717,26 +550,35 @@ async function main() {
   const page = await context.newPage();
   const rootHref = resolveUrl(config.baseUrl, cwd);
 
+  console.log(`\nRecording: ${config.projectName || 'workflow'}`);
+  console.log(`  URL: ${rootHref}`);
+  console.log('');
+
   await page.goto(rootHref, { waitUntil: config.waitUntil || 'domcontentloaded' });
 
   for (const step of config.setupSteps || []) {
     await runStep(page, step);
   }
 
-  const crawlResult = config.crawl && config.crawl.enabled !== false
-    ? await crawlSite(page, config, page.url())
-    : { visited: [{ url: page.url(), depth: 0 }], actionLog: [] };
+  const crawlResult =
+    config.crawl && config.crawl.enabled !== false
+      ? await crawlSite(page, config, page.url())
+      : { visited: [{ url: page.url(), depth: 0 }], actionLog: [] };
 
   await sleep(600);
+
+  // FIX BUG #1: Capture video path BEFORE closing context.
+  // Playwright finalises the video file on context close, but the path
+  // must be read while the page object is still alive.
+  const rawVideoPath = await page.video().path();
 
   await context.close();
   await browser.close();
 
-  const rawVideoPath = await page.video().path();
-
   const baseName = `${sanitizeSegment(config.projectName || 'workflow') || 'workflow'}-${slugForUrl(rootHref)}`;
   const mp4Path = path.join(outputDir, `${baseName}.mp4`);
 
+  console.log('\nConverting to MP4...');
   convertWebmToMp4(rawVideoPath, mp4Path);
 
   if (config.recording.keepRawVideo) {
@@ -755,9 +597,10 @@ async function main() {
   const crawlJsonPath = path.join(artifactsDir, 'crawl.json');
   fs.writeFileSync(crawlJsonPath, JSON.stringify(crawlResult, null, 2) + '\n', 'utf8');
 
-  console.log(path.relative(cwd, mp4Path));
-  console.log(path.relative(cwd, reportPath));
-  console.log(path.relative(cwd, crawlJsonPath));
+  console.log(`\nDone! Output files:`);
+  console.log(`  Video:    ${path.relative(cwd, mp4Path)}`);
+  console.log(`  Report:   ${path.relative(cwd, reportPath)}`);
+  console.log(`  Crawl:    ${path.relative(cwd, crawlJsonPath)}`);
 }
 
 main().catch((error) => {

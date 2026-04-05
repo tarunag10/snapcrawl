@@ -1,43 +1,24 @@
 {
-  "projectName": "My App Full Workflow",
+  "projectName": "My App Screenshots",
   "baseUrl": "http://localhost:3000/",
-  "outputDir": "output/workflow-recorder",
+  "outputDir": "output/social",
   "browser": "chromium",
-  "headless": true,
-  "waitUntil": "domcontentloaded",
-  "viewport": {
-    "width": 1512,
-    "height": 982
-  },
-  "recording": {
-    "width": 1920,
-    "height": 1080,
-    "keepRawVideo": false
-  },
+  "waitUntil": "load",
   "crawl": {
     "enabled": true,
-    "maxPages": 35,
+    "maxPages": 40,
     "maxDepth": 4,
     "sameOrigin": true,
     "includeQuery": false,
-    "waitAfterLoadMs": 500,
+    "waitAfterLoadMs": 200,
     "excludePatterns": [
       "/logout",
-      "/signout",
-      "/delete"
+      "/signout"
+    ],
+    "viewports": [
+      { "name": "desktop-full", "width": 1440, "height": 1800, "fullPage": true },
+      { "name": "social-1200x627", "width": 1200, "height": 627, "fullPage": false },
+      { "name": "mobile", "width": 430, "height": 932, "fullPage": false }
     ]
-  },
-  "workflow": {
-    "enabled": true,
-    "includeHoverSweep": true,
-    "scrollPerPage": true,
-    "scrollSteps": 4,
-    "perPagePauseMs": 500,
-    "actionPauseMs": 450,
-    "interactionLimitPerPage": 6,
-    "allowRiskyActions": false
-  },
-  "setupSteps": [
-    { "type": "wait", "ms": 400 }
-  ]
+  }
 }
