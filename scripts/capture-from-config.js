@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  browserFromName,
+  launchBrowser,
   ensureDir,
   resolveUrl,
   sanitizeSegment,
@@ -273,8 +273,7 @@ async function main() {
 
   requireFields(config);
 
-  const browserType = browserFromName(config.browser || 'chromium');
-  const browser = await browserType.launch({ headless: config.headless !== false });
+  const browser = await launchBrowser(config);
   const page = await browser.newPage();
 
   const outputDir = path.resolve(cwd, config.outputDir || 'output/social');

@@ -3,6 +3,7 @@
   "baseUrl": "http://localhost:3000/",
   "outputDir": "output/social",
   "browser": "chromium",
+  "browserChannel": "auto",
   "waitUntil": "load",
   "crawl": {
     "enabled": true,

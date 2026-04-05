@@ -13,7 +13,7 @@ try {
 }
 
 const {
-  browserFromName,
+  launchBrowser,
   ensureDir,
   resolveUrl,
   sanitizeSegment,
@@ -530,8 +530,7 @@ async function main() {
 
   const recordingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-recorder-'));
 
-  const browserType = browserFromName(config.browser || 'chromium');
-  const browser = await browserType.launch({ headless: config.headless !== false });
+  const browser = await launchBrowser(config);
 
   const context = await browser.newContext({
     viewport: {

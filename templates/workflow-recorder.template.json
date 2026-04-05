@@ -3,6 +3,7 @@
   "baseUrl": "http://localhost:3000/",
   "outputDir": "output/workflow-recorder",
   "browser": "chromium",
+  "browserChannel": "auto",
   "headless": true,
   "waitUntil": "domcontentloaded",
   "viewport": {

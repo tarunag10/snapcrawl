@@ -111,7 +111,7 @@ Both scripts support these step types in `setupSteps` / `scenarios[].steps`:
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| System Chrome fallback | Planned | Use `channel: 'chrome'` to skip Chromium download — uses already-installed Chrome/Edge |
+| System Chrome fallback | **Done** | Use `channel: 'chrome'` to skip Chromium download — uses already-installed Chrome/Edge |
 | Single-file bundle | Planned | Bundle with `@vercel/ncc` or `esbuild` so `npx` downloads one small file, not a dependency tree |
 | `npm create snapcrawl` | Planned | Interactive scaffolder (like `create-react-app`) to set up configs in any project |
 | GitHub Action | Planned | `uses: snapcrawl/action@v1` for CI screenshot capture on every PR |
