@@ -25,6 +25,9 @@ const {
   collectPageLinks,
   deepMerge,
 } = require('../lib/shared');
+const { loadJsonConfig, validateRecordConfig } = require('../lib/config');
+const { safeJoin } = require('../lib/safety');
+const { writeHtmlReport } = require('../lib/report');
 
 const DEFAULT_CONFIG = {
   projectName: 'Universal Workflow Recorder',
@@ -59,7 +62,8 @@ const DEFAULT_CONFIG = {
     scrollSteps: 4,
     perPagePauseMs: 500,
     actionPauseMs: 450,
-    interactionLimitPerPage: 6,
+    allowClicks: false,
+    interactionLimitPerPage: 0,
     allowRiskyActions: false,
   },
   setupSteps: [],
@@ -106,6 +110,10 @@ Options:
   --config <path>      Config file path (default: workflow-recorder.config.json)
   --output <dir>       Override outputDir from config
   --base-url <url>     Override baseUrl from config
+  --timeout <ms>       Default timeout for browser actions
+  --allow-clicks       Allow automatic click exploration
+  --allow-script-steps Allow evaluate/call setup steps from trusted configs
+  --no-html-report     Skip generating report.html
   --headful            Show the browser window during recording
   --keep-raw-video     Keep the raw .webm file alongside the .mp4
   --help, -h           Show this help message
@@ -119,6 +127,10 @@ function parseArgs(argv) {
     baseUrl: null,
     headful: false,
     keepRawVideo: false,
+    timeout: null,
+    allowClicks: false,
+    allowScriptSteps: false,
+    htmlReport: true,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -154,6 +166,27 @@ function parseArgs(argv) {
 
     if (arg === '--keep-raw-video') {
       args.keepRawVideo = true;
+      continue;
+    }
+
+    if (arg === '--allow-clicks') {
+      args.allowClicks = true;
+      continue;
+    }
+
+    if (arg === '--allow-script-steps') {
+      args.allowScriptSteps = true;
+      continue;
+    }
+
+    if (arg === '--no-html-report') {
+      args.htmlReport = false;
+      continue;
+    }
+
+    if (arg === '--timeout' && argv[i + 1]) {
+      args.timeout = Number(argv[i + 1]);
+      i += 1;
       continue;
     }
   }
@@ -277,6 +310,7 @@ async function clickByPoint(page, point, actionPauseMs) {
 
 async function exploreInteractionsOnPage(page, config, pageUrl) {
   if (!config.workflow.enabled) return [];
+  if (!config.workflow.allowClicks) return [];
 
   const visitedActions = [];
   const cap = Math.max(0, Number(config.workflow.interactionLimitPerPage || 6));
@@ -511,19 +545,26 @@ async function main() {
     throw new Error(`Config file not found: ${configPath}`);
   }
 
-  const loadedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const loadedConfig = loadJsonConfig(configPath, { cwd });
   const config = deepMerge(DEFAULT_CONFIG, loadedConfig);
 
   if (args.baseUrl) config.baseUrl = args.baseUrl;
   if (args.output) config.outputDir = args.output;
   if (args.headful) config.headless = false;
   if (args.keepRawVideo) config.recording.keepRawVideo = true;
+  if (args.allowClicks) {
+    config.workflow.allowClicks = true;
+    if (!config.workflow.interactionLimitPerPage) config.workflow.interactionLimitPerPage = 6;
+  }
 
   if (!config.baseUrl) {
     throw new Error('Config requires `baseUrl`.');
   }
+  validateRecordConfig(config, { cwd, allowScriptSteps: args.allowScriptSteps });
 
-  const outputDir = path.resolve(cwd, config.outputDir || DEFAULT_CONFIG.outputDir);
+  const outputDir = config.outputDir
+    ? safeJoin(cwd, config.outputDir, 'outputDir')
+    : path.resolve(cwd, DEFAULT_CONFIG.outputDir);
   const artifactsDir = path.join(outputDir, 'artifacts');
   ensureDir(outputDir);
   ensureDir(artifactsDir);
@@ -531,48 +572,59 @@ async function main() {
   const recordingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-recorder-'));
 
   const browser = await launchBrowser(config);
+  let context;
+  let rawVideoPath;
+  let crawlResult;
+  let rootHref;
 
-  const context = await browser.newContext({
-    viewport: {
-      width: Number(config.viewport.width || 1512),
-      height: Number(config.viewport.height || 982),
-    },
-    recordVideo: {
-      dir: recordingDir,
-      size: {
-        width: Number(config.recording.width || 1920),
-        height: Number(config.recording.height || 1080),
+  try {
+    context = await browser.newContext({
+      storageState: config.auth && config.auth.storageState ? safeJoin(cwd, config.auth.storageState, 'auth.storageState') : undefined,
+      extraHTTPHeaders: config.auth && config.auth.headers ? config.auth.headers : undefined,
+      viewport: {
+        width: Number(config.viewport.width || 1512),
+        height: Number(config.viewport.height || 982),
       },
-    },
-  });
+      recordVideo: {
+        dir: recordingDir,
+        size: {
+          width: Number(config.recording.width || 1920),
+          height: Number(config.recording.height || 1080),
+        },
+      },
+    });
+    if (Array.isArray(config.auth && config.auth.cookies)) {
+      await context.addCookies(config.auth.cookies);
+    }
 
-  const page = await context.newPage();
-  const rootHref = resolveUrl(config.baseUrl, cwd);
+    const page = await context.newPage();
+    if (args.timeout) page.setDefaultTimeout(args.timeout);
+    rootHref = resolveUrl(config.baseUrl, cwd);
 
-  console.log(`\nRecording: ${config.projectName || 'workflow'}`);
-  console.log(`  URL: ${rootHref}`);
-  console.log('');
+    console.log(`\nRecording: ${config.projectName || 'workflow'}`);
+    console.log(`  URL: ${rootHref}`);
+    console.log('');
 
-  await page.goto(rootHref, { waitUntil: config.waitUntil || 'domcontentloaded' });
+    await page.goto(rootHref, { waitUntil: config.waitUntil || 'domcontentloaded' });
 
-  for (const step of config.setupSteps || []) {
-    await runStep(page, step);
+    for (const step of config.setupSteps || []) {
+      await runStep(page, step);
+    }
+
+    crawlResult =
+      config.crawl && config.crawl.enabled !== false
+        ? await crawlSite(page, config, page.url())
+        : { visited: [{ url: page.url(), depth: 0 }], actionLog: [] };
+
+    await sleep(600);
+
+    // Playwright finalises the video file on context close, but the path
+    // must be read while the page object is still alive.
+    rawVideoPath = await page.video().path();
+  } finally {
+    if (context) await context.close().catch(() => null);
+    await browser.close().catch(() => null);
   }
-
-  const crawlResult =
-    config.crawl && config.crawl.enabled !== false
-      ? await crawlSite(page, config, page.url())
-      : { visited: [{ url: page.url(), depth: 0 }], actionLog: [] };
-
-  await sleep(600);
-
-  // FIX BUG #1: Capture video path BEFORE closing context.
-  // Playwright finalises the video file on context close, but the path
-  // must be read while the page object is still alive.
-  const rawVideoPath = await page.video().path();
-
-  await context.close();
-  await browser.close();
 
   const baseName = `${sanitizeSegment(config.projectName || 'workflow') || 'workflow'}-${slugForUrl(rootHref)}`;
   const mp4Path = path.join(outputDir, `${baseName}.mp4`);
@@ -595,6 +647,25 @@ async function main() {
 
   const crawlJsonPath = path.join(artifactsDir, 'crawl.json');
   fs.writeFileSync(crawlJsonPath, JSON.stringify(crawlResult, null, 2) + '\n', 'utf8');
+
+  if (args.htmlReport) {
+    const reportHtmlPath = path.join(outputDir, 'report.html');
+    writeHtmlReport(reportHtmlPath, {
+      projectName: config.projectName || 'Workflow Recorder',
+      mode: 'record',
+      captures: crawlResult.visited.map((item, index) => ({
+        file: '',
+        name: `${index + 1}. ${item.url}`,
+        url: item.url,
+        size: `depth ${item.depth}`,
+      })),
+      video: path.relative(outputDir, mp4Path),
+      summary: {
+        pages: crawlResult.visited.length,
+        interactions: crawlResult.actionLog.length,
+      },
+    });
+  }
 
   console.log(`\nDone! Output files:`);
   console.log(`  Video:    ${path.relative(cwd, mp4Path)}`);

@@ -4,7 +4,7 @@
   "description": "Plug-and-play toolkit to auto-record MP4 demo videos and multi-viewport screenshots of any website",
   "main": "dist/capture-from-config.js",
   "bin": {
-    "snapcrawl": "dist/capture-from-config.js",
+    "snapcrawl": "dist/snapcrawl.js",
     "snapcrawl-record": "dist/record-workflow.js",
     "snapcrawl-init": "dist/create-snapcrawl.js",
     "snapcrawl-mcp": "dist/mcp-server.js"
@@ -15,6 +15,8 @@
   ],
   "scripts": {
     "build": "node esbuild.config.mjs",
+    "test": "node --test tests/*.test.js",
+    "audit:prod": "npm audit --omit=dev",
     "prepublishOnly": "npm run build",
     "workflow:record": "node scripts/record-workflow.js --config workflow-recorder.config.json",
     "workflow:record:headful": "node scripts/record-workflow.js --config workflow-recorder.config.json --headful",

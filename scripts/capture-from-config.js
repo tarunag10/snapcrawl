@@ -22,6 +22,9 @@ const {
   buildPageSlug,
   pad,
 } = require('../lib/shared');
+const { loadJsonConfig, validateCaptureConfig } = require('../lib/config');
+const { safeJoin } = require('../lib/safety');
+const { writeHtmlReport } = require('../lib/report');
 
 /* ------------------------------------------------------------------ */
 /*  CLI                                                                */
@@ -36,13 +39,17 @@ screenshots (desktop, mobile, tablet).
 
 Options:
   --config <path>   Config file path (default: capture-config.json)
+  --timeout <ms>    Global timeout for the run
+  --allow-script-steps
+                    Allow evaluate/call setup steps from trusted configs
   --no-workflow     Skip generating the WORKFLOW.md report
+  --no-html-report  Skip generating report.html
   --help, -h        Show this help message
   `.trim());
 }
 
 function parseArgs(argv) {
-  const args = { config: 'capture-config.json', workflow: true };
+  const args = { config: 'capture-config.json', workflow: true, htmlReport: true, timeout: null, allowScriptSteps: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
@@ -53,6 +60,13 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === '--no-workflow') {
       args.workflow = false;
+    } else if (arg === '--no-html-report') {
+      args.htmlReport = false;
+    } else if (arg === '--timeout' && argv[i + 1]) {
+      args.timeout = Number(argv[i + 1]);
+      i += 1;
+    } else if (arg === '--allow-script-steps') {
+      args.allowScriptSteps = true;
     }
   }
   return args;
@@ -93,7 +107,7 @@ async function captureScenarioMode(page, config, outputDir, cwd) {
       await runStep(page, step);
     }
 
-    const outPath = path.join(outputDir, scenario.file);
+    const outPath = safeJoin(outputDir, scenario.file, 'scenario file');
     await page.screenshot({
       path: outPath,
       fullPage: Boolean(scenario.fullPage),
@@ -154,6 +168,20 @@ async function captureCrawlMode(page, config, outputDir, cwd) {
   const visited = new Set();
   const captures = [];
   let fileCounter = 1;
+
+  if ((crawl.source === 'sitemap' || crawl.sitemapUrl) && crawl.sitemapUrl) {
+    for (const href of await sitemapUrls(crawl.sitemapUrl, rootUrl, cwd)) {
+      const normalized = normalizeHref(href, rootUrl.href, rootUrl, {
+        sameOrigin,
+        includeQuery,
+        includePatterns,
+        excludePatterns,
+      });
+      if (!normalized || enqueued.has(normalized)) continue;
+      enqueued.add(normalized);
+      queue.push({ href: normalized, depth: 1 });
+    }
+  }
 
   while (queue.length > 0 && visited.size < maxPages) {
     const current = queue.shift();
@@ -216,6 +244,28 @@ async function captureCrawlMode(page, config, outputDir, cwd) {
   return captures;
 }
 
+async function sitemapUrls(sitemapUrl, rootUrl, cwd) {
+  const resolved = resolveUrl(sitemapUrl, cwd);
+  let xml = '';
+  if (resolved.startsWith('file://')) {
+    xml = fs.readFileSync(new URL(resolved), 'utf8');
+  } else {
+    const response = await fetch(resolved);
+    if (!response.ok) throw new Error(`Sitemap fetch failed: ${response.status} ${response.statusText}`);
+    xml = await response.text();
+  }
+  return [...xml.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)]
+    .map((match) => match[1].trim())
+    .filter(Boolean);
+}
+
+async function applyAuth(context, config) {
+  const auth = config.auth || {};
+  if (Array.isArray(auth.cookies) && auth.cookies.length > 0) {
+    await context.addCookies(auth.cookies);
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Report                                                             */
 /* ------------------------------------------------------------------ */
@@ -273,17 +323,23 @@ function requireFields(config) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const cwd = process.cwd();
-  const configPath = path.resolve(cwd, args.config);
-  const raw = fs.readFileSync(configPath, 'utf8');
-  const config = JSON.parse(raw);
+  const configPath = safeJoin(cwd, args.config, 'config path');
+  const config = loadJsonConfig(configPath, { cwd });
   config._configFile = path.relative(cwd, configPath);
 
   requireFields(config);
+  validateCaptureConfig(config, {
+    cwd,
+    outputDir: path.resolve(cwd, config.outputDir || 'output/social'),
+    allowScriptSteps: args.allowScriptSteps,
+  });
 
   const browser = await launchBrowser(config);
-  const page = await browser.newPage();
+  let context;
 
-  const outputDir = path.resolve(cwd, config.outputDir || 'output/social');
+  const outputDir = config.outputDir
+    ? safeJoin(cwd, config.outputDir, 'outputDir')
+    : path.resolve(cwd, 'output/social');
   ensureDir(outputDir);
 
   const crawlEnabled = Boolean(config.crawl && config.crawl.enabled);
@@ -293,14 +349,28 @@ async function main() {
   console.log(`  Mode: ${mode}`);
   console.log('');
 
-  if (!crawlEnabled) {
-    const url = resolveUrl(config.baseUrl, cwd);
-    await page.goto(url, { waitUntil: config.waitUntil || 'load' });
-  }
+  let captures = [];
+  try {
+    context = await browser.newContext({
+      storageState: config.auth && config.auth.storageState ? safeJoin(cwd, config.auth.storageState, 'auth.storageState') : undefined,
+      extraHTTPHeaders: config.auth && config.auth.headers ? config.auth.headers : undefined,
+    });
+    await applyAuth(context, config);
+    const page = await context.newPage();
+    if (args.timeout) page.setDefaultTimeout(args.timeout);
 
-  const captures = crawlEnabled
-    ? await captureCrawlMode(page, config, outputDir, cwd)
-    : await captureScenarioMode(page, config, outputDir, cwd);
+    if (!crawlEnabled) {
+      const url = resolveUrl(config.baseUrl, cwd);
+      await page.goto(url, { waitUntil: config.waitUntil || 'load' });
+    }
+
+    captures = crawlEnabled
+      ? await captureCrawlMode(page, config, outputDir, cwd)
+      : await captureScenarioMode(page, config, outputDir, cwd);
+  } finally {
+    if (context) await context.close().catch(() => null);
+    await browser.close().catch(() => null);
+  }
 
   if (args.workflow) {
     const workflowPath = path.join(outputDir, 'WORKFLOW.md');
@@ -308,7 +378,15 @@ async function main() {
     console.log(`  ${path.relative(cwd, workflowPath)}`);
   }
 
-  await browser.close();
+  if (args.htmlReport) {
+    const htmlPath = path.join(outputDir, 'report.html');
+    writeHtmlReport(htmlPath, {
+      projectName: config.projectName || 'Capture',
+      mode,
+      captures,
+    });
+    console.log(`  ${path.relative(cwd, htmlPath)}`);
+  }
 
   console.log(`\nDone! ${captures.length} screenshot(s) captured.`);
 }

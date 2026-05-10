@@ -60,8 +60,11 @@ npm run capture:screenshots      # Capture multi-viewport screenshots
 ### CLI Help
 
 ```bash
-node scripts/record-workflow.js --help
-node scripts/capture-from-config.js --help
+npx snapcrawl --help
+npx snapcrawl capture --config capture-config.json
+npx snapcrawl record --config workflow-recorder.config.json --allow-clicks
+npx snapcrawl baseline save --dir output/social
+npx snapcrawl diff --dir output/social
 ```
 
 ### Initialize Configs (Interactive)
@@ -107,6 +110,8 @@ Both scripts support these step types in `setupSteps` / `scenarios[].steps`:
 ## Safety
 
 - `allowRiskyActions: false` (default) avoids destructive or payment-like clicks
+- Automatic click exploration is off unless `--allow-clicks` or `workflow.allowClicks` is enabled
+- `evaluate` and `call` setup steps require `--allow-script-steps`
 - Excludes paths like `/logout`, `/signout`, `/delete`, `/remove`, `/destroy`
 - Filters button text containing: delete, remove, pay, purchase, checkout, etc.
 - Set `allowRiskyActions: true` only when you explicitly want deep workflow traversal
