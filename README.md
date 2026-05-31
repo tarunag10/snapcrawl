@@ -60,8 +60,15 @@ npm run capture:screenshots      # Capture multi-viewport screenshots
 ### CLI Help
 
 ```bash
-node scripts/record-workflow.js --help
-node scripts/capture-from-config.js --help
+npx snapcrawl --help
+npx snapcrawl capture --config capture-config.json
+npx snapcrawl capture --config capture-config.json --parallel 4
+npx snapcrawl capture --config capture-config.json --ai-analyze --ai-limit 10
+npx snapcrawl record --config workflow-recorder.config.json --allow-clicks
+npx snapcrawl baseline save --dir output/social
+npx snapcrawl diff --dir output/social --visual
+npx snapcrawl storybook http://localhost:6006 --output output/storybook
+npx snapcrawl watch --config capture-config.json --dir src
 ```
 
 ### Initialize Configs (Interactive)
@@ -107,6 +114,8 @@ Both scripts support these step types in `setupSteps` / `scenarios[].steps`:
 ## Safety
 
 - `allowRiskyActions: false` (default) avoids destructive or payment-like clicks
+- Automatic click exploration is off unless `--allow-clicks` or `workflow.allowClicks` is enabled
+- `evaluate` and `call` setup steps require `--allow-script-steps`
 - Excludes paths like `/logout`, `/signout`, `/delete`, `/remove`, `/destroy`
 - Filters button text containing: delete, remove, pay, purchase, checkout, etc.
 - Set `allowRiskyActions: true` only when you explicitly want deep workflow traversal
@@ -146,6 +155,82 @@ Add to your `claude_desktop_config.json`:
 | `snapcrawl_capture` | Run screenshot capture using a config file |
 | `snapcrawl_record` | Run video workflow recording using a config file |
 | `snapcrawl_status` | Check which configs exist and summarize their settings |
+
+---
+
+## New Product Features
+
+### Shareable HTML Reports
+
+Every capture writes `report.html` by default. The report includes:
+
+- Search across pages and URLs
+- Viewport filters
+- A compare-viewports mode
+- Embedded workflow video when recording
+- Visual diff and AI finding sections when those features are enabled
+
+### Visual Diff Reports
+
+```bash
+npx snapcrawl baseline save --dir output/social
+npx snapcrawl capture --config capture-config.json
+npx snapcrawl diff --dir output/social --visual
+```
+
+`baseline save` stores hashes and a copy of baseline image assets. `diff --visual` compares the latest PNG captures against that saved baseline, writes red overlay PNGs into `output/social/diff/`, and generates `output/social/diff-report.html`.
+
+### AI Screenshot Analysis
+
+```bash
+OPENAI_API_KEY=... npx snapcrawl capture --config capture-config.json --ai-analyze --ai-limit 12
+```
+
+The analyzer sends screenshots to a vision model and writes `analysis.json` plus an AI findings section in `report.html`. Use `--ai-model <id>` to override the default model.
+
+### Storybook Capture
+
+```bash
+npx snapcrawl storybook http://localhost:6006 --output output/storybook
+```
+
+Snapcrawl reads Storybook `index.json` or `stories.json`, builds iframe scenarios for each story, and captures desktop/mobile screenshots without hand-maintaining a URL list.
+
+### Watch Mode
+
+```bash
+npx snapcrawl watch --config capture-config.json --dir src
+npx snapcrawl watch --record --config workflow-recorder.config.json --dir app
+```
+
+Watch mode runs once immediately, then re-runs capture or record after source changes. It ignores generated output, `dist/`, `.git/`, and `node_modules/`.
+
+### GitHub Action
+
+```yaml
+jobs:
+  snapcrawl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run dev &
+      - uses: ./
+        with:
+          url: http://localhost:3000
+          command: capture
+          output: output/social
+          args: --parallel 4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snapcrawl-report
+          path: output/
+```
+
+For Storybook, set `command: storybook` and `url: http://localhost:6006`.
 
 ---
 

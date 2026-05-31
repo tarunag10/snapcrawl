@@ -9,6 +9,7 @@ const {
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { resolveConfigPathForTool } = require('../lib/mcp-utils');
 
 /* ------------------------------------------------------------------ */
 /*  Config builders (reused from create-snapcrawl.js)                  */
@@ -97,8 +98,19 @@ function distDir() {
 }
 
 /** Spawn a child process and collect stdout + stderr */
-function runScript(scriptPath, args) {
+const MAX_OUTPUT_BYTES = 1024 * 1024;
+const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+
+function appendBounded(chunks, next) {
+  const currentSize = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  if (currentSize >= MAX_OUTPUT_BYTES) return;
+  chunks.push(next.slice(0, Math.max(0, MAX_OUTPUT_BYTES - currentSize)));
+}
+
+function runScript(scriptPath, args, options = {}) {
   return new Promise((resolve) => {
+    let settled = false;
+    const timeoutMs = Number(options.timeoutMs || DEFAULT_TIMEOUT_MS);
     const child = spawn(process.execPath, [scriptPath, ...args], {
       cwd: process.cwd(),
       env: { ...process.env },
@@ -106,9 +118,22 @@ function runScript(scriptPath, args) {
     });
     const chunks = [];
     const errChunks = [];
-    child.stdout.on('data', (d) => chunks.push(d));
-    child.stderr.on('data', (d) => errChunks.push(d));
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill('SIGTERM');
+      resolve({
+        code: 124,
+        stdout: Buffer.concat(chunks).toString('utf8'),
+        stderr: `Timed out after ${timeoutMs}ms`,
+      });
+    }, timeoutMs);
+    child.stdout.on('data', (d) => appendBounded(chunks, d));
+    child.stderr.on('data', (d) => appendBounded(errChunks, d));
     child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       resolve({
         code,
         stdout: Buffer.concat(chunks).toString('utf8'),
@@ -243,7 +268,7 @@ async function handleInit(args) {
 
 async function handleCapture(args) {
   const configPath = args.configPath || 'capture-config.json';
-  const absConfig = path.resolve(process.cwd(), configPath);
+  const absConfig = resolveConfigPathForTool(configPath);
 
   if (!fs.existsSync(absConfig)) {
     return {
@@ -260,7 +285,7 @@ async function handleCapture(args) {
     };
   }
 
-  const result = await runScript(script, ['--config', absConfig]);
+  const result = await runScript(script, ['--config', absConfig], { timeoutMs: args.timeoutMs });
 
   if (result.code !== 0) {
     return {
@@ -276,7 +301,7 @@ async function handleCapture(args) {
 
 async function handleRecord(args) {
   const configPath = args.configPath || 'workflow-recorder.config.json';
-  const absConfig = path.resolve(process.cwd(), configPath);
+  const absConfig = resolveConfigPathForTool(configPath);
 
   if (!fs.existsSync(absConfig)) {
     return {
@@ -293,7 +318,7 @@ async function handleRecord(args) {
     };
   }
 
-  const result = await runScript(script, ['--config', absConfig]);
+  const result = await runScript(script, ['--config', absConfig], { timeoutMs: args.timeoutMs });
 
   if (result.code !== 0) {
     return {
@@ -355,16 +380,7 @@ async function handleStatus() {
 /*  Server setup                                                       */
 /* ------------------------------------------------------------------ */
 
-const server = new Server(
-  { name: 'snapcrawl', version: '0.1.0' },
-  { capabilities: { tools: {} } },
-);
-
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: TOOLS,
-}));
-
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+async function dispatchTool(request) {
   const { name, arguments: args = {} } = request.params;
 
   switch (name) {
@@ -382,14 +398,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         isError: true,
       };
   }
-});
+}
+
+function createServer() {
+  const server = new Server(
+    { name: 'snapcrawl', version: '0.1.0' },
+    { capabilities: { tools: {} } },
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: TOOLS,
+  }));
+
+  server.setRequestHandler(CallToolRequestSchema, dispatchTool);
+  return server;
+}
 
 async function main() {
   const transport = new StdioServerTransport();
+  const server = createServer();
   await server.connect(transport);
 }
 
-main().catch((err) => {
-  console.error('MCP server failed to start:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('MCP server failed to start:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  createServer,
+  dispatchTool,
+  resolveConfigPathForTool,
+  runScript,
+};

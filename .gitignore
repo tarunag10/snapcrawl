@@ -4,3 +4,9 @@ output/
 *.mp4
 *.webm
 dist/
+capture-config.json
+workflow-recorder.config.json
+.env
+.env.*
+!.env.example
+!.env.template
