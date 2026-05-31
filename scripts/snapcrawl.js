@@ -13,14 +13,18 @@ Usage:
   snapcrawl <url> [options]
   snapcrawl capture [url] [options]
   snapcrawl record [url] [options]
+  snapcrawl storybook <url> [options]
+  snapcrawl watch [options]
   snapcrawl init
   snapcrawl status
   snapcrawl baseline save [--output <path>] [--dir <dir>]
-  snapcrawl diff [--baseline <path>] [--dir <dir>]
+  snapcrawl diff [--baseline <path>] [--dir <dir>] [--visual]
 
 Commands:
   capture        Capture multi-viewport screenshots
   record         Record a crawl-driven MP4 workflow
+  storybook      Capture every Storybook story via iframe.html
+  watch          Re-run capture or record when files change
   init           Scaffold Snapcrawl config files
   status         Show local config and artifact status
   baseline save  Save hashes for captured artifacts
@@ -30,6 +34,8 @@ Options:
   --config <path>   Use an existing config file
   --output <dir>    Override output directory for commands that support it
   --headful         Show the browser for record
+  --parallel <n>    Capture screenshots with parallel browser pages
+  --ai-analyze      Analyze screenshots with a vision model (requires OPENAI_API_KEY)
   --help, -h        Show this help message
   `.trim());
 }
@@ -69,10 +75,20 @@ function withoutUrl(args, url) {
   return [...args.slice(0, index), ...args.slice(index + 1)];
 }
 
+function withoutOption(args, name) {
+  const index = args.indexOf(name);
+  if (index === -1) return args;
+  return [...args.slice(0, index), ...args.slice(index + 2)];
+}
+
 function runScript(script, args) {
   const scriptPath = path.join(ROOT, script);
   const result = spawnSync(process.execPath, [scriptPath, ...args], { stdio: 'inherit' });
   process.exit(result.status === null ? 1 : result.status);
+}
+
+function hasFlag(args, name) {
+  return args.includes(name);
 }
 
 function tempCaptureConfig(url, args) {
@@ -111,7 +127,7 @@ function capture(args) {
 
   if (url && !explicitConfig) {
     const config = tempCaptureConfig(url, args);
-    runScript('capture-from-config.js', ['--config', config]);
+    runScript('capture-from-config.js', ['--config', config, ...passThrough]);
   }
 
   runScript('capture-from-config.js', passThrough);
@@ -176,6 +192,8 @@ function saveBaseline(args) {
 
 function diff(args) {
   const { compareToBaseline } = require('../lib/diff');
+  const { writeHtmlReport } = require('../lib/report');
+  const { writeVisualDiffReport } = require('../lib/visual-diff');
   const baselinePath = path.resolve(process.cwd(), optionValue(args, '--baseline', 'snapcrawl-baseline.json'));
   const rootDir = path.resolve(process.cwd(), optionValue(args, '--dir', 'output'));
 
@@ -184,9 +202,44 @@ function diff(args) {
   }
 
   const captures = artifactFiles(rootDir).map((file) => ({ file: path.relative(rootDir, file) }));
-  const result = compareToBaseline({ baselinePath, rootDir, captures });
+  let result = compareToBaseline({ baselinePath, rootDir, captures });
+  const baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf8'));
+  if (hasFlag(args, '--visual')) {
+    const visual = writeVisualDiffReport({
+      baselineRoot: baseline.assetRoot || baseline.rootDir || rootDir,
+      currentRoot: rootDir,
+      outputDir: path.join(rootDir, 'diff'),
+      results: result.results,
+      threshold: Number(optionValue(args, '--threshold', '0')),
+    });
+    result = { ...result, results: visual.results };
+  }
+  if (!hasFlag(args, '--no-html-report')) {
+    writeHtmlReport(path.join(rootDir, 'diff-report.html'), {
+      projectName: 'Snapcrawl Diff',
+      mode: 'diff',
+      captures,
+      diff: result,
+    });
+  }
   console.log(`Diff: ${result.counts.unchanged} unchanged, ${result.counts.changed} changed, ${result.counts.missing} missing, ${result.counts.added} added`);
   process.exit(result.counts.changed || result.counts.missing || result.counts.added ? 1 : 0);
+}
+
+async function storybook(args) {
+  const { writeStorybookConfig } = require('../lib/storybook');
+  const url = args.find((arg) => isUrl(arg));
+  if (!url) throw new Error('Usage: snapcrawl storybook <url> [--output <dir>]');
+  const outputDir = optionValue(args, '--output', 'output/storybook');
+  const { configPath, stories } = await writeStorybookConfig({ baseUrl: url, outputDir });
+  console.log(`Discovered ${stories.length} Storybook stories`);
+  const passThrough = withoutOption(withoutUrl(args, url), '--output');
+  runScript('capture-from-config.js', ['--config', configPath, ...passThrough]);
+}
+
+async function watch(args) {
+  const { runWatch } = require('../lib/watch');
+  await runWatch(args, { scriptPath: __filename });
 }
 
 async function main() {
@@ -205,6 +258,8 @@ async function main() {
 
   if (command === 'capture') return capture(args.slice(1));
   if (command === 'record') return record(args.slice(1));
+  if (command === 'storybook') return storybook(args.slice(1));
+  if (command === 'watch') return watch(args.slice(1));
   if (command === 'init') return runScript('create-snapcrawl.js', args.slice(1));
   if (command === 'status') return status();
   if (command === 'baseline' && args[1] === 'save') return saveBaseline(args.slice(2));

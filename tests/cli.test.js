@@ -13,4 +13,8 @@ test('snapcrawl cli exposes core commands in help', () => {
   assert.match(result.stdout, /record/);
   assert.match(result.stdout, /baseline save/);
   assert.match(result.stdout, /diff/);
+  assert.match(result.stdout, /storybook/);
+  assert.match(result.stdout, /watch/);
+  assert.match(result.stdout, /--ai-analyze/);
+  assert.match(result.stdout, /--parallel/);
 });

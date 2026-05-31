@@ -1,0 +1,61 @@
+name: Snapcrawl
+description: Capture website screenshots, Storybook states, videos, and visual diff reports in CI.
+author: Snapcrawl
+
+inputs:
+  url:
+    description: Website or Storybook URL to capture.
+    required: false
+  config:
+    description: Snapcrawl config path.
+    required: false
+    default: capture-config.json
+  command:
+    description: capture, record, storybook, or diff.
+    required: false
+    default: capture
+  output:
+    description: Output directory for generated artifacts.
+    required: false
+    default: output
+  args:
+    description: Extra snapcrawl CLI arguments.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install Snapcrawl action package
+      shell: bash
+      run: npm install --global "$GITHUB_ACTION_PATH"
+
+    - name: Run Snapcrawl
+      shell: bash
+      run: |
+        set -euo pipefail
+        command="${{ inputs.command }}"
+        url="${{ inputs.url }}"
+        config="${{ inputs.config }}"
+        output="${{ inputs.output }}"
+        extra_args="${{ inputs.args }}"
+
+        if [ "$command" = "storybook" ]; then
+          if [ -z "$url" ]; then
+            echo "The storybook command requires the url input." >&2
+            exit 1
+          fi
+          snapcrawl storybook "$url" --output "$output" $extra_args
+        elif [ "$command" = "record" ]; then
+          if [ -n "$url" ]; then
+            snapcrawl record "$url" --output "$output" $extra_args
+          else
+            snapcrawl record --config "$config" --output "$output" $extra_args
+          fi
+        elif [ "$command" = "diff" ]; then
+          snapcrawl diff --baseline "$config" --dir "$output" $extra_args
+        elif [ -n "$url" ]; then
+          snapcrawl capture "$url" --output "$output" $extra_args
+        else
+          snapcrawl capture --config "$config" $extra_args
+        fi

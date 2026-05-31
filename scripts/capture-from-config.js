@@ -40,6 +40,10 @@ screenshots (desktop, mobile, tablet).
 Options:
   --config <path>   Config file path (default: capture-config.json)
   --timeout <ms>    Global timeout for the run
+  --parallel <n>    Capture page viewports with parallel browser pages
+  --ai-analyze      Analyze screenshots with a vision model (requires OPENAI_API_KEY)
+  --ai-model <id>   Vision model for --ai-analyze (default: gpt-4.1-mini)
+  --ai-limit <n>    Maximum screenshots to analyze
   --allow-script-steps
                     Allow evaluate/call setup steps from trusted configs
   --no-workflow     Skip generating the WORKFLOW.md report
@@ -49,7 +53,17 @@ Options:
 }
 
 function parseArgs(argv) {
-  const args = { config: 'capture-config.json', workflow: true, htmlReport: true, timeout: null, allowScriptSteps: false };
+  const args = {
+    config: 'capture-config.json',
+    workflow: true,
+    htmlReport: true,
+    timeout: null,
+    parallel: 1,
+    aiAnalyze: false,
+    aiModel: 'gpt-4.1-mini',
+    aiLimit: null,
+    allowScriptSteps: false,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
@@ -64,6 +78,17 @@ function parseArgs(argv) {
       args.htmlReport = false;
     } else if (arg === '--timeout' && argv[i + 1]) {
       args.timeout = Number(argv[i + 1]);
+      i += 1;
+    } else if (arg === '--parallel' && argv[i + 1]) {
+      args.parallel = Number(argv[i + 1]);
+      i += 1;
+    } else if (arg === '--ai-analyze') {
+      args.aiAnalyze = true;
+    } else if (arg === '--ai-model' && argv[i + 1]) {
+      args.aiModel = argv[i + 1];
+      i += 1;
+    } else if (arg === '--ai-limit' && argv[i + 1]) {
+      args.aiLimit = Number(argv[i + 1]);
       i += 1;
     } else if (arg === '--allow-script-steps') {
       args.allowScriptSteps = true;
@@ -168,6 +193,7 @@ async function captureCrawlMode(page, config, outputDir, cwd) {
   const visited = new Set();
   const captures = [];
   let fileCounter = 1;
+  const parallel = Math.max(1, Number(config.crawl.parallel || config.parallel || 1));
 
   if ((crawl.source === 'sitemap' || crawl.sitemapUrl) && crawl.sitemapUrl) {
     for (const href of await sitemapUrls(crawl.sitemapUrl, rootUrl, cwd)) {
@@ -202,22 +228,42 @@ async function captureCrawlMode(page, config, outputDir, cwd) {
     const currentUrl = new URL(current.href);
     const pageSlug = buildPageSlug(currentUrl);
 
-    for (const vp of viewports) {
-      await page.setViewportSize({ width: vp.width, height: vp.height });
+    const captureOne = async (vp, fileNumber) => {
+      const capturePage = parallel > 1 ? await page.context().newPage() : page;
+      try {
+        if (parallel > 1) {
+          await capturePage.goto(current.href, { waitUntil });
+          if (waitAfterLoadMs > 0) await capturePage.waitForTimeout(waitAfterLoadMs);
+        }
+        await capturePage.setViewportSize({ width: vp.width, height: vp.height });
+        const file = `${pad(fileNumber, 3)}-${pageSlug}-${sanitizeSegment(vp.name) || 'view'}.png`;
+        const outPath = path.join(outputDir, file);
+        await capturePage.screenshot({ path: outPath, fullPage: vp.fullPage });
 
-      const file = `${pad(fileCounter, 3)}-${pageSlug}-${sanitizeSegment(vp.name) || 'view'}.png`;
-      const outPath = path.join(outputDir, file);
-      await page.screenshot({ path: outPath, fullPage: vp.fullPage });
+        console.log(`  ${path.relative(cwd, outPath)}`);
+        return {
+          mode: 'crawl',
+          name: `${current.href} [${vp.name}]`,
+          file,
+          size: `${vp.width}x${vp.height}`,
+          viewport: vp,
+          url: current.href,
+        };
+      } finally {
+        if (capturePage !== page) await capturePage.close().catch(() => null);
+      }
+    };
 
-      captures.push({
-        mode: 'crawl',
-        name: `${current.href} [${vp.name}]`,
-        file,
-        size: `${vp.width}x${vp.height}`,
-        url: current.href,
-      });
-      fileCounter += 1;
-      console.log(`  ${path.relative(cwd, outPath)}`);
+    if (parallel > 1) {
+      const tasks = viewports.map((vp, index) => captureOne(vp, fileCounter + index));
+      captures.push(...await Promise.all(tasks));
+      fileCounter += viewports.length;
+    } else {
+      for (const vp of viewports) {
+        const capture = await captureOne(vp, fileCounter);
+        captures.push(capture);
+        fileCounter += 1;
+      }
     }
 
     if (current.depth >= maxDepth) {
@@ -316,6 +362,13 @@ function requireFields(config) {
   }
 }
 
+function resolveConfigPath(configPath, cwd) {
+  if (!configPath || typeof configPath !== 'string' || configPath.includes('\0')) {
+    throw new Error('Invalid config path');
+  }
+  return path.resolve(cwd, configPath);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Main                                                               */
 /* ------------------------------------------------------------------ */
@@ -323,11 +376,13 @@ function requireFields(config) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const cwd = process.cwd();
-  const configPath = safeJoin(cwd, args.config, 'config path');
+  const configPath = resolveConfigPath(args.config, cwd);
   const config = loadJsonConfig(configPath, { cwd });
   config._configFile = path.relative(cwd, configPath);
 
   requireFields(config);
+  config.parallel = args.parallel;
+  if (config.crawl) config.crawl.parallel = args.parallel;
   validateCaptureConfig(config, {
     cwd,
     outputDir: path.resolve(cwd, config.outputDir || 'output/social'),
@@ -378,12 +433,26 @@ async function main() {
     console.log(`  ${path.relative(cwd, workflowPath)}`);
   }
 
+  let analysis = null;
+  if (args.aiAnalyze) {
+    const { analyzeCaptures } = require('../lib/ai-analysis');
+    const reportPath = await analyzeCaptures({
+      outputDir,
+      captures,
+      model: args.aiModel,
+      limit: args.aiLimit,
+    });
+    analysis = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+    console.log(`  ${path.relative(cwd, reportPath)}`);
+  }
+
   if (args.htmlReport) {
     const htmlPath = path.join(outputDir, 'report.html');
     writeHtmlReport(htmlPath, {
       projectName: config.projectName || 'Capture',
       mode,
       captures,
+      analysis,
     });
     console.log(`  ${path.relative(cwd, htmlPath)}`);
   }

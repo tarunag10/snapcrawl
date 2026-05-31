@@ -447,6 +447,9 @@ async function crawlSite(page, config, rootHref) {
 
 function resolveFfmpegBinary() {
   if (process.env.FFMPEG_BIN) {
+    if (process.env.FFMPEG_BIN.includes('\0') || !path.isAbsolute(process.env.FFMPEG_BIN)) {
+      throw new Error('FFMPEG_BIN must be an absolute path to an executable');
+    }
     return process.env.FFMPEG_BIN;
   }
 
