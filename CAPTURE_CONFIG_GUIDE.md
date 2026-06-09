@@ -35,6 +35,15 @@ npm run workflow:record
   "browser": "chromium",
   "headless": true,
   "waitUntil": "domcontentloaded",
+  "auth": {
+    "storageState": ".auth/storage-state.json",
+    "cookiesFile": ".auth/cookies.json",
+    "headersFile": ".auth/headers.json",
+    "basic": {
+      "username": "${env:SNAPCRAWL_USER}",
+      "password": "${env:SNAPCRAWL_PASSWORD}"
+    }
+  },
   "viewport": { "width": 1512, "height": 982 },
   "recording": { "width": 1920, "height": 1080, "keepRawVideo": false },
   "crawl": {
@@ -90,6 +99,28 @@ Example login snippet:
 
 - `allowRiskyActions: false` (default) avoids destructive or payment-like clicks.
 - Set `allowRiskyActions: true` only when you explicitly want deep workflow traversal.
+- `evaluate` and `call` steps require `--allow-script-steps`.
+- Use `${env:NAME}` placeholders for secrets so configs stay commit-safe.
+
+## CI Visual Review
+
+```bash
+npx snapcrawl ci --config capture-config.json --baseline snapcrawl-baseline.json
+npx snapcrawl ci --config capture-config.json --baseline snapcrawl-baseline.json --threshold 2
+npx snapcrawl ci --config capture-config.json --baseline snapcrawl-baseline.json --update-baseline
+```
+
+CI mode captures screenshots, compares them to the baseline, writes `ci-report.html`, and exits non-zero when changed/missing/added artifacts exceed the threshold.
+
+## Storybook Subsets
+
+```bash
+npx snapcrawl storybook http://localhost:6006 --tag stable
+npx snapcrawl storybook http://localhost:6006 --include button
+npx snapcrawl storybook http://localhost:6006 --changed-from origin/main
+```
+
+Storybook capture can filter by tag, text, or stories whose `importPath` changed since a git ref.
 
 ## Output Files
 

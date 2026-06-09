@@ -15,6 +15,7 @@ Usage:
   snapcrawl record [url] [options]
   snapcrawl storybook <url> [options]
   snapcrawl watch [options]
+  snapcrawl ci [options]
   snapcrawl init
   snapcrawl status
   snapcrawl baseline save [--output <path>] [--dir <dir>]
@@ -25,6 +26,7 @@ Commands:
   record         Record a crawl-driven MP4 workflow
   storybook      Capture every Storybook story via iframe.html
   watch          Re-run capture or record when files change
+  ci             Capture, diff against baseline, write CI report, and exit with status
   init           Scaffold Snapcrawl config files
   status         Show local config and artifact status
   baseline save  Save hashes for captured artifacts
@@ -36,6 +38,7 @@ Options:
   --headful         Show the browser for record
   --parallel <n>    Capture screenshots with parallel browser pages
   --ai-analyze      Analyze screenshots with a vision model (requires OPENAI_API_KEY)
+  --threshold <n>   Allowed changed/missing/added artifacts for ci
   --help, -h        Show this help message
   `.trim());
 }
@@ -231,15 +234,31 @@ async function storybook(args) {
   const url = args.find((arg) => isUrl(arg));
   if (!url) throw new Error('Usage: snapcrawl storybook <url> [--output <dir>]');
   const outputDir = optionValue(args, '--output', 'output/storybook');
-  const { configPath, stories } = await writeStorybookConfig({ baseUrl: url, outputDir });
+  const { configPath, stories } = await writeStorybookConfig({
+    baseUrl: url,
+    outputDir,
+    maxStories: optionValue(args, '--max-stories', 500),
+    include: optionValue(args, '--include', ''),
+    tag: optionValue(args, '--tag', ''),
+    changedFrom: optionValue(args, '--changed-from', ''),
+  });
   console.log(`Discovered ${stories.length} Storybook stories`);
-  const passThrough = withoutOption(withoutUrl(args, url), '--output');
+  let passThrough = withoutOption(withoutUrl(args, url), '--output');
+  passThrough = withoutOption(passThrough, '--max-stories');
+  passThrough = withoutOption(passThrough, '--include');
+  passThrough = withoutOption(passThrough, '--tag');
+  passThrough = withoutOption(passThrough, '--changed-from');
   runScript('capture-from-config.js', ['--config', configPath, ...passThrough]);
 }
 
 async function watch(args) {
   const { runWatch } = require('../lib/watch');
   await runWatch(args, { scriptPath: __filename });
+}
+
+function ci(args) {
+  const { runCi } = require('../lib/ci');
+  process.exit(runCi(args, { scriptPath: __filename }));
 }
 
 async function main() {
@@ -260,6 +279,7 @@ async function main() {
   if (command === 'record') return record(args.slice(1));
   if (command === 'storybook') return storybook(args.slice(1));
   if (command === 'watch') return watch(args.slice(1));
+  if (command === 'ci') return ci(args.slice(1));
   if (command === 'init') return runScript('create-snapcrawl.js', args.slice(1));
   if (command === 'status') return status();
   if (command === 'baseline' && args[1] === 'save') return saveBaseline(args.slice(2));

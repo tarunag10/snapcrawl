@@ -34,6 +34,44 @@ function fileExists(filePath) {
   }
 }
 
+function readPackageJson(cwd) {
+  const packagePath = path.join(cwd, 'package.json');
+  if (!fileExists(packagePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function detectProjectDefaults(cwd) {
+  const pkg = readPackageJson(cwd);
+  const scripts = pkg && pkg.scripts ? pkg.scripts : {};
+  const scriptText = Object.values(scripts).join(' ');
+  let baseUrl = 'http://localhost:3000';
+
+  if (/vite|astro|storybook/i.test(scriptText)) baseUrl = 'http://localhost:5173';
+  if (/next/i.test(scriptText)) baseUrl = 'http://localhost:3000';
+  if (/remix/i.test(scriptText)) baseUrl = 'http://localhost:3000';
+  if (/webpack-dev-server/i.test(scriptText)) baseUrl = 'http://localhost:8080';
+
+  const hasStorybook = Boolean(
+    scripts.storybook ||
+    scripts['storybook:dev'] ||
+    fileExists(path.join(cwd, '.storybook', 'main.js')) ||
+    fileExists(path.join(cwd, '.storybook', 'main.ts'))
+  );
+
+  return {
+    baseUrl,
+    projectName: pkg && pkg.name ? pkg.name : hostnameFrom(baseUrl),
+    hasPackageJson: Boolean(pkg),
+    hasStorybook,
+    devScript: scripts.dev ? 'npm run dev' : '',
+    storybookUrl: 'http://localhost:6006',
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /*  Config builders                                                    */
 /* ------------------------------------------------------------------ */
@@ -112,11 +150,19 @@ async function main() {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
   try {
+    const detected = detectProjectDefaults(cwd);
+    if (detected.hasPackageJson) {
+      console.log(`  Detected project: ${detected.projectName}`);
+      if (detected.devScript) console.log(`  Dev server script: ${detected.devScript}`);
+      if (detected.hasStorybook) console.log('  Storybook detected');
+      console.log('');
+    }
+
     // 1. Base URL
-    const baseUrl = await ask(rl, '  What\'s your website URL?', 'https://example.com');
+    const baseUrl = await ask(rl, '  What\'s your website URL?', detected.baseUrl);
 
     // 2. Project name
-    const defaultName = hostnameFrom(baseUrl);
+    const defaultName = detected.projectName || hostnameFrom(baseUrl);
     const projectName = await ask(rl, '  Project name?', defaultName);
 
     // 3. Output directory
@@ -130,6 +176,11 @@ async function main() {
     // 5. Video config
     const videoAnswer = await ask(rl, '  Also generate video recording config?', 'yes');
     const wantVideo = videoAnswer.toLowerCase().startsWith('y');
+
+    const storybookAnswer = detected.hasStorybook
+      ? await ask(rl, '  Also print Storybook capture command?', 'yes')
+      : 'no';
+    const wantStorybook = storybookAnswer.toLowerCase().startsWith('y');
 
     rl.close();
 
@@ -181,6 +232,9 @@ async function main() {
     if (wantVideo) {
       console.log('    npx snapcrawl-record --config workflow-recorder.config.json');
     }
+    if (wantStorybook) {
+      console.log(`    npx snapcrawl storybook ${detected.storybookUrl} --output ${outputDir}/storybook`);
+    }
     console.log('');
   } catch (err) {
     rl.close();
@@ -189,6 +243,7 @@ async function main() {
 }
 
 module.exports = main;
+module.exports.detectProjectDefaults = detectProjectDefaults;
 
 if (require.main === module) {
   main().catch((err) => {

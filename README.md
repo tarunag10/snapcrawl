@@ -65,9 +65,10 @@ npx snapcrawl capture --config capture-config.json
 npx snapcrawl capture --config capture-config.json --parallel 4
 npx snapcrawl capture --config capture-config.json --ai-analyze --ai-limit 10
 npx snapcrawl record --config workflow-recorder.config.json --allow-clicks
+npx snapcrawl ci --config capture-config.json --baseline snapcrawl-baseline.json
 npx snapcrawl baseline save --dir output/social
 npx snapcrawl diff --dir output/social --visual
-npx snapcrawl storybook http://localhost:6006 --output output/storybook
+npx snapcrawl storybook http://localhost:6006 --output output/storybook --tag stable
 npx snapcrawl watch --config capture-config.json --dir src
 ```
 
@@ -167,8 +168,9 @@ Every capture writes `report.html` by default. The report includes:
 - Search across pages and URLs
 - Viewport filters
 - A compare-viewports mode
+- A review summary with capture count, visual-change count, AI finding count, and redacted auth methods
 - Embedded workflow video when recording
-- Visual diff and AI finding sections when those features are enabled
+- Visual diff and categorized AI finding sections when those features are enabled
 
 ### Visual Diff Reports
 
@@ -180,6 +182,16 @@ npx snapcrawl diff --dir output/social --visual
 
 `baseline save` stores hashes and a copy of baseline image assets. `diff --visual` compares the latest PNG captures against that saved baseline, writes red overlay PNGs into `output/social/diff/`, and generates `output/social/diff-report.html`.
 
+### CI Review Mode
+
+```bash
+npx snapcrawl ci --config capture-config.json --baseline snapcrawl-baseline.json
+npx snapcrawl ci --config capture-config.json --baseline snapcrawl-baseline.json --threshold 2
+npx snapcrawl ci --config capture-config.json --baseline snapcrawl-baseline.json --update-baseline
+```
+
+`ci` runs capture, compares screenshots against the baseline, writes `ci-report.html`, and exits non-zero when changed, missing, or added artifacts exceed `--threshold`. Use `--update-baseline` to create or refresh the baseline after an approved visual change.
+
 ### AI Screenshot Analysis
 
 ```bash
@@ -188,13 +200,40 @@ OPENAI_API_KEY=... npx snapcrawl capture --config capture-config.json --ai-analy
 
 The analyzer sends screenshots to a vision model and writes `analysis.json` plus an AI findings section in `report.html`. Use `--ai-model <id>` to override the default model.
 
+AI findings are normalized into actionable review categories: layout, mobile, contrast, content, interaction, accessibility, and performance. Findings can include recommendations and owner hints for design, frontend, content, or QA follow-up.
+
+### Authenticated Captures
+
+Use `auth` in either capture or record configs to reuse login state without hardcoding secrets:
+
+```json
+{
+  "auth": {
+    "storageState": ".auth/storage-state.json",
+    "cookiesFile": ".auth/cookies.json",
+    "headersFile": ".auth/headers.json",
+    "basic": {
+      "username": "${env:SNAPCRAWL_USER}",
+      "password": "${env:SNAPCRAWL_PASSWORD}"
+    }
+  }
+}
+```
+
+Reports show which auth methods were used, but redact values.
+
 ### Storybook Capture
 
 ```bash
 npx snapcrawl storybook http://localhost:6006 --output output/storybook
+npx snapcrawl storybook http://localhost:6006 --tag stable
+npx snapcrawl storybook http://localhost:6006 --include button
+npx snapcrawl storybook http://localhost:6006 --changed-from origin/main
 ```
 
 Snapcrawl reads Storybook `index.json` or `stories.json`, builds iframe scenarios for each story, and captures desktop/mobile screenshots without hand-maintaining a URL list.
+
+Filters let you capture a subset by story text, Storybook tag, or stories whose `importPath` changed since a git ref.
 
 ### Watch Mode
 

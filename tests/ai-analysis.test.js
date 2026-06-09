@@ -35,7 +35,14 @@ test('normalizeAnalysisResult produces stable finding records from model JSON', 
     rawText: JSON.stringify({
       summary: 'Dashboard page with layout issues.',
       findings: [
-        { severity: 'high', title: 'Clipped CTA', description: 'Button text is clipped.' },
+        {
+          severity: 'high',
+          category: 'mobile',
+          title: 'Clipped CTA',
+          description: 'Button text is clipped.',
+          recommendation: 'Increase the button min-width.',
+          ownerHint: 'frontend',
+        },
       ],
     }),
   });
@@ -47,8 +54,11 @@ test('normalizeAnalysisResult produces stable finding records from model JSON', 
       file: 'home.png',
       url: 'https://example.test/',
       severity: 'high',
+      category: 'mobile',
       title: 'Clipped CTA',
       description: 'Button text is clipped.',
+      recommendation: 'Increase the button min-width.',
+      ownerHint: 'frontend',
     },
   ]);
 });

@@ -99,10 +99,18 @@ test('generateReportHtml renders report controls, visual diff results, and AI fi
         {
           file: 'home-desktop.png',
           severity: 'high',
+          category: 'layout',
           title: 'Overlapping heading',
           description: 'The page heading overlaps the primary action.',
+          recommendation: 'Move the heading above the button group.',
+          ownerHint: 'frontend',
         },
       ],
+    },
+    auth: {
+      enabled: true,
+      methods: ['storageState'],
+      redacted: true,
     },
   });
 
@@ -115,6 +123,9 @@ test('generateReportHtml renders report controls, visual diff results, and AI fi
   assert.match(html, /diff\/home-desktop\.diff\.png/);
   assert.match(html, /AI Findings/);
   assert.match(html, /Overlapping heading/);
+  assert.match(html, /layout/);
+  assert.match(html, /Owner hint: frontend/);
+  assert.match(html, /Auth used: storageState \(values redacted\)/);
 });
 
 test('generateReportHtml encodes non-http asset schemes as local paths', () => {

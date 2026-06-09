@@ -25,6 +25,7 @@ const {
 const { loadJsonConfig, validateCaptureConfig } = require('../lib/config');
 const { safeJoin } = require('../lib/safety');
 const { writeHtmlReport } = require('../lib/report');
+const { applyAuth, buildContextOptions, describeAuthConfig } = require('../lib/auth');
 
 /* ------------------------------------------------------------------ */
 /*  CLI                                                                */
@@ -40,6 +41,7 @@ screenshots (desktop, mobile, tablet).
 Options:
   --config <path>   Config file path (default: capture-config.json)
   --timeout <ms>    Global timeout for the run
+  --output <dir>    Override outputDir from config
   --parallel <n>    Capture page viewports with parallel browser pages
   --ai-analyze      Analyze screenshots with a vision model (requires OPENAI_API_KEY)
   --ai-model <id>   Vision model for --ai-analyze (default: gpt-4.1-mini)
@@ -58,6 +60,7 @@ function parseArgs(argv) {
     workflow: true,
     htmlReport: true,
     timeout: null,
+    outputDir: null,
     parallel: 1,
     aiAnalyze: false,
     aiModel: 'gpt-4.1-mini',
@@ -78,6 +81,9 @@ function parseArgs(argv) {
       args.htmlReport = false;
     } else if (arg === '--timeout' && argv[i + 1]) {
       args.timeout = Number(argv[i + 1]);
+      i += 1;
+    } else if (arg === '--output' && argv[i + 1]) {
+      args.outputDir = argv[i + 1];
       i += 1;
     } else if (arg === '--parallel' && argv[i + 1]) {
       args.parallel = Number(argv[i + 1]);
@@ -305,13 +311,6 @@ async function sitemapUrls(sitemapUrl, rootUrl, cwd) {
     .filter(Boolean);
 }
 
-async function applyAuth(context, config) {
-  const auth = config.auth || {};
-  if (Array.isArray(auth.cookies) && auth.cookies.length > 0) {
-    await context.addCookies(auth.cookies);
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /*  Report                                                             */
 /* ------------------------------------------------------------------ */
@@ -382,6 +381,7 @@ async function main() {
 
   requireFields(config);
   config.parallel = args.parallel;
+  if (args.outputDir) config.outputDir = args.outputDir;
   if (config.crawl) config.crawl.parallel = args.parallel;
   validateCaptureConfig(config, {
     cwd,
@@ -406,11 +406,8 @@ async function main() {
 
   let captures = [];
   try {
-    context = await browser.newContext({
-      storageState: config.auth && config.auth.storageState ? safeJoin(cwd, config.auth.storageState, 'auth.storageState') : undefined,
-      extraHTTPHeaders: config.auth && config.auth.headers ? config.auth.headers : undefined,
-    });
-    await applyAuth(context, config);
+    context = await browser.newContext(buildContextOptions(config, { cwd }));
+    await applyAuth(context, config, { cwd });
     const page = await context.newPage();
     if (args.timeout) page.setDefaultTimeout(args.timeout);
 
@@ -453,6 +450,7 @@ async function main() {
       mode,
       captures,
       analysis,
+      auth: describeAuthConfig(config),
     });
     console.log(`  ${path.relative(cwd, htmlPath)}`);
   }

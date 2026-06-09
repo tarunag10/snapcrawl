@@ -28,6 +28,7 @@ const {
 const { loadJsonConfig, validateRecordConfig } = require('../lib/config');
 const { safeJoin } = require('../lib/safety');
 const { writeHtmlReport } = require('../lib/report');
+const { applyAuth, buildContextOptions, describeAuthConfig } = require('../lib/auth');
 
 const DEFAULT_CONFIG = {
   projectName: 'Universal Workflow Recorder',
@@ -582,8 +583,7 @@ async function main() {
 
   try {
     context = await browser.newContext({
-      storageState: config.auth && config.auth.storageState ? safeJoin(cwd, config.auth.storageState, 'auth.storageState') : undefined,
-      extraHTTPHeaders: config.auth && config.auth.headers ? config.auth.headers : undefined,
+      ...buildContextOptions(config, { cwd }),
       viewport: {
         width: Number(config.viewport.width || 1512),
         height: Number(config.viewport.height || 982),
@@ -596,9 +596,7 @@ async function main() {
         },
       },
     });
-    if (Array.isArray(config.auth && config.auth.cookies)) {
-      await context.addCookies(config.auth.cookies);
-    }
+    await applyAuth(context, config, { cwd });
 
     const page = await context.newPage();
     if (args.timeout) page.setDefaultTimeout(args.timeout);
@@ -667,6 +665,7 @@ async function main() {
         pages: crawlResult.visited.length,
         interactions: crawlResult.actionLog.length,
       },
+      auth: describeAuthConfig(config),
     });
   }
 

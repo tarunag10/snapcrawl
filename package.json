@@ -2,7 +2,24 @@
   "name": "snapcrawl",
   "version": "0.1.0",
   "description": "Plug-and-play toolkit to auto-record MP4 demo videos and multi-viewport screenshots of any website",
-  "main": "dist/capture-from-config.js",
+  "main": "dist/snapcrawl.js",
+  "types": "index.d.ts",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tarunag10/snapcrawl.git"
+  },
+  "homepage": "https://github.com/tarunag10/snapcrawl#readme",
+  "bugs": {
+    "url": "https://github.com/tarunag10/snapcrawl/issues"
+  },
+  "exports": {
+    ".": "./dist/snapcrawl.js",
+    "./mcp": "./dist/mcp-server.js",
+    "./package.json": "./package.json"
+  },
   "bin": {
     "snapcrawl": "dist/snapcrawl.js",
     "snapcrawl-record": "dist/record-workflow.js",
@@ -11,7 +28,11 @@
   },
   "files": [
     "dist/",
-    "templates/"
+    "templates/",
+    "index.d.ts",
+    "README.md",
+    "CAPTURE_CONFIG_GUIDE.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "node esbuild.config.mjs",

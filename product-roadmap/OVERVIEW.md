@@ -2,18 +2,22 @@
 
 ## What You Have Today
 
-A **plug-and-play website screenshot + workflow recording toolkit** with two scripts:
+A **plug-and-play website screenshot + workflow recording toolkit** with a packaged CLI:
 
-1. **capture-from-config.js** - Crawl-based multi-viewport screenshot capture
-2. **record-workflow.js** - Full MP4 workflow video recording with smart interactions
-3. **bootstrap-capture-kit.sh** - One-command setup into any project
+1. **snapcrawl capture** - Crawl-based multi-viewport screenshot capture
+2. **snapcrawl record** - Full MP4 workflow video recording with smart interactions
+3. **snapcrawl ci** - Baseline-aware visual review for CI
+4. **snapcrawl storybook** - Storybook iframe capture with filters
+5. **snapcrawl init** - Interactive config scaffolding
 
 **Current strengths:**
 - Config-driven (JSON) - no code to write
 - Crawl + scenario dual modes
 - Safety system (risky action filtering)
 - Video recording with FFmpeg conversion
-- Bootstrap into any project
+- npm package metadata and CLI binaries
+- Authenticated capture via storage state, cookies, headers, and basic credentials
+- Shareable HTML reports with visual diff and AI findings
 - Smart interactions (hover sweep, scroll showcase, click exploration)
 
 ---
@@ -25,7 +29,7 @@ Read each document in this folder:
 | File | What It Covers |
 |------|---------------|
 | `01-COMPETITIVE-LANDSCAPE.md` | What exists, where you fit, gaps to exploit |
-| `02-CRITICAL-IMPROVEMENTS.md` | Must-fix issues in the current code |
+| `02-CRITICAL-IMPROVEMENTS.md` | Current trust, CI, report, auth, Storybook, and packaging priorities |
 | `03-FEATURE-ROADMAP.md` | New features ranked by impact |
 | `04-DISTRIBUTION-STRATEGY.md` | npm package, CLI, GitHub Actions, VS Code extension |
 | `05-NAMING-AND-BRANDING.md` | Name ideas, positioning, tagline |

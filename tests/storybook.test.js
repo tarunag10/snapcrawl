@@ -3,6 +3,7 @@ const test = require('node:test');
 
 const {
   discoverStoriesFromIndex,
+  filterStories,
   storybookCaptureConfig,
   storybookIframeUrl,
 } = require('../lib/storybook');
@@ -38,4 +39,30 @@ test('storybookCaptureConfig builds scenario captures for Storybook iframes', ()
     url: 'http://localhost:6006/iframe.html?id=button--primary',
   });
   assert.equal(storybookIframeUrl('http://localhost:6006/', 'card--empty'), 'http://localhost:6006/iframe.html?id=card--empty');
+});
+
+test('filterStories supports text, tag, and changed-file filters', () => {
+  const stories = [
+    {
+      id: 'button--primary',
+      title: 'Components/Button',
+      name: 'Primary',
+      tags: ['stable'],
+      importPath: 'src/Button.stories.tsx',
+    },
+    {
+      id: 'card--empty',
+      title: 'Components/Card',
+      name: 'Empty',
+      tags: ['wip'],
+      importPath: 'src/Card.stories.tsx',
+    },
+  ];
+
+  assert.deepEqual(filterStories(stories, { include: 'button' }).map((story) => story.id), ['button--primary']);
+  assert.deepEqual(filterStories(stories, { tag: 'wip' }).map((story) => story.id), ['card--empty']);
+  assert.deepEqual(
+    filterStories(stories, { changedFiles: ['src/Button.stories.tsx'] }).map((story) => story.id),
+    ['button--primary']
+  );
 });

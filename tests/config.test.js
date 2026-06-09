@@ -87,3 +87,21 @@ test('validation interpolates env placeholders before checking required values',
 
   assert.equal(config.baseUrl, 'https://example.com/login');
 });
+
+test('validateCaptureConfig validates auth helper files and basic credentials', () => {
+  assert.doesNotThrow(() => validateCaptureConfig({
+    baseUrl: 'https://example.com',
+    crawl: { enabled: true },
+    auth: {
+      cookiesFile: 'cookies.json',
+      headersFile: 'headers.json',
+      basic: { username: 'demo', password: 'password' },
+    },
+  }));
+
+  assert.throws(() => validateCaptureConfig({
+    baseUrl: 'https://example.com',
+    crawl: { enabled: true },
+    auth: { basic: { username: 'demo' } },
+  }), /password/i);
+});
